@@ -12,6 +12,7 @@ import (
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/envtemplate"
+	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/tmux"
 )
@@ -148,11 +149,12 @@ type Service struct {
 	cfg  *config.Config
 	git  WorktreeRunner
 	tmux *tmux.Client
+	hook hooks.Hook
 }
 
 // NewService creates a Service.
-func NewService(cfg *config.Config, git WorktreeRunner, tmux *tmux.Client) *Service {
-	return &Service{cfg: cfg, git: git, tmux: tmux}
+func NewService(cfg *config.Config, git WorktreeRunner, tmux *tmux.Client, hook hooks.Hook) *Service {
+	return &Service{cfg: cfg, git: git, tmux: tmux, hook: hook}
 }
 
 // resolvePaths returns cloneDir, worktreesRoot, and worktreePath for a project+branch.
@@ -209,6 +211,18 @@ func (s *Service) New(project, branch string) (NewResult, error) {
 		return NewResult{}, fmt.Errorf("%w: %s/%s", ErrWorktreeExists, project, branch)
 	}
 
+	attrs := map[string]string{
+		semconv.HookAttrProject:      project,
+		semconv.HookAttrBranch:       branch,
+		semconv.HookAttrRepo:         p.Repo,
+		semconv.HookAttrCloneDir:     cloneDir,
+		semconv.HookAttrWorktreePath: worktreePath,
+	}
+
+	if err := s.hook.Trigger(semconv.HookPreWorktree, attrs, worktreePath); err != nil {
+		return NewResult{}, fmt.Errorf("pre-worktree hook: %w", err)
+	}
+
 	if err := os.MkdirAll(worktreesRoot, 0o755); err != nil {
 		return NewResult{}, fmt.Errorf("creating worktrees dir: %w", err)
 	}
@@ -218,6 +232,10 @@ func (s *Service) New(project, branch string) (NewResult, error) {
 		if err := s.git.AddNewBranch(cloneDir, worktreePath, branch); err != nil {
 			return NewResult{}, fmt.Errorf("failed to create worktree (add: %v; add -b: %w)", addErr, err)
 		}
+	}
+
+	if err := s.hook.Trigger(semconv.HookPostWorktree, attrs, worktreePath); err != nil {
+		return NewResult{}, fmt.Errorf("post-worktree hook: %w", err)
 	}
 
 	result := NewResult{Path: worktreePath}
@@ -261,12 +279,28 @@ func (s *Service) NewFrom(project, branch, fromBranch string) (NewResult, error)
 		return NewResult{}, fmt.Errorf("%w: %s/%s", ErrWorktreeExists, project, branch)
 	}
 
+	attrs := map[string]string{
+		semconv.HookAttrProject:      project,
+		semconv.HookAttrBranch:       branch,
+		semconv.HookAttrRepo:         p.Repo,
+		semconv.HookAttrCloneDir:     cloneDir,
+		semconv.HookAttrWorktreePath: worktreePath,
+	}
+
+	if err := s.hook.Trigger(semconv.HookPreWorktree, attrs, worktreePath); err != nil {
+		return NewResult{}, fmt.Errorf("pre-worktree hook: %w", err)
+	}
+
 	if err := os.MkdirAll(worktreesRoot, 0o755); err != nil {
 		return NewResult{}, fmt.Errorf("creating worktrees dir: %w", err)
 	}
 
 	if err := s.git.AddNewBranchFrom(cloneDir, worktreePath, branch, fromBranch); err != nil {
 		return NewResult{}, fmt.Errorf("creating worktree from %s: %w", fromBranch, err)
+	}
+
+	if err := s.hook.Trigger(semconv.HookPostWorktree, attrs, worktreePath); err != nil {
+		return NewResult{}, fmt.Errorf("post-worktree hook: %w", err)
 	}
 
 	result := NewResult{Path: worktreePath}

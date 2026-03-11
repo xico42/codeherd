@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/notify"
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/session"
@@ -44,7 +45,7 @@ var pluginHandleClaudeCmd = &cobra.Command{
 		}
 
 		tc := tmux.NewClient(tmux.NewRealRunner())
-		sesSvc := session.NewService(tc)
+		sesSvc := session.NewService(tc, &hooks.NoOp{})
 		notifySvc := notify.NewDefaultService()
 
 		switch input.HookEventName {

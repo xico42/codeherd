@@ -2,5 +2,5 @@ ch
 *.test
 .env
 *.toml.local
-coverage.out
 vendor/
+*.out

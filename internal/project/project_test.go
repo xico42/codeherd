@@ -8,6 +8,7 @@ import (
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/project"
+	"github.com/xico42/codeherd/internal/semconv"
 )
 
 // mockGitRunner records Clone calls and returns controlled errors.
@@ -26,6 +27,25 @@ func (m *mockGitRunner) Clone(repo, path, branch string) error {
 	return nil
 }
 
+type mockHook struct {
+	calls  []hookCall
+	failOn string
+}
+
+type hookCall struct {
+	name    string
+	attrs   map[string]string
+	workDir string
+}
+
+func (m *mockHook) Trigger(name string, attrs map[string]string, workDir string) error {
+	m.calls = append(m.calls, hookCall{name, attrs, workDir})
+	if m.failOn == name {
+		return fmt.Errorf("hook %s failed", name)
+	}
+	return nil
+}
+
 func makeConfig(projectsDir string, projects map[string]config.ProjectConfig) *config.Config {
 	cfg := &config.Config{}
 	cfg.Defaults.ProjectsDir = projectsDir
@@ -39,7 +59,7 @@ func TestList_SortedByName(t *testing.T) {
 		"alpha": {Repo: "git@github.com:user/alpha.git", DefaultBranch: "develop"},
 		"myapp": {Repo: "git@github.com:user/myapp.git"},
 	})
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	entries := svc.List()
 
 	if len(entries) != 3 {
@@ -54,7 +74,7 @@ func TestList_PathDerivedFromRepo(t *testing.T) {
 	cfg := makeConfig("/home/user/projects", map[string]config.ProjectConfig{
 		"myapp": {Repo: "git@github.com:user/myapp.git"},
 	})
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	entries := svc.List()
 
 	want := "/home/user/projects/github.com/user/myapp"
@@ -67,7 +87,7 @@ func TestList_ClonedAlwaysFalse(t *testing.T) {
 	cfg := makeConfig("/home/user/projects", map[string]config.ProjectConfig{
 		"myapp": {Repo: "git@github.com:user/myapp.git"},
 	})
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	entries := svc.List()
 	if entries[0].Cloned {
 		t.Error("List should not check filesystem; Cloned should be false")
@@ -76,7 +96,7 @@ func TestList_ClonedAlwaysFalse(t *testing.T) {
 
 func TestList_Empty(t *testing.T) {
 	cfg := makeConfig("/home/user/projects", map[string]config.ProjectConfig{})
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	entries := svc.List()
 	if len(entries) != 0 {
 		t.Errorf("got %d entries, want 0", len(entries))
@@ -87,7 +107,7 @@ func TestShow_ValidProject(t *testing.T) {
 	cfg := makeConfig("/home/user/projects", map[string]config.ProjectConfig{
 		"myapp": {Repo: "git@github.com:user/myapp.git", DefaultBranch: "main"},
 	})
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	e, err := svc.Show("myapp")
 	if err != nil {
 		t.Fatalf("Show() error = %v", err)
@@ -103,7 +123,7 @@ func TestShow_ValidProject(t *testing.T) {
 
 func TestShow_UnknownProject(t *testing.T) {
 	cfg := makeConfig("/home/user/projects", map[string]config.ProjectConfig{})
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	_, err := svc.Show("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown project")
@@ -120,7 +140,7 @@ func TestShow_ClonedTrue_WhenPathExists(t *testing.T) {
 	if err := os.MkdirAll(expectedPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	e, err := svc.Show("myapp")
 	if err != nil {
 		t.Fatalf("Show() error = %v", err)
@@ -136,7 +156,7 @@ func TestClone_HappyPath(t *testing.T) {
 	cfg := makeConfig(dir, map[string]config.ProjectConfig{
 		"myapp": {Repo: "git@github.com:user/myapp.git", DefaultBranch: "main"},
 	})
-	svc := project.NewService(cfg, mock)
+	svc := project.NewService(cfg, mock, &mockHook{})
 	if err := svc.Clone("myapp"); err != nil {
 		t.Fatalf("Clone() error = %v", err)
 	}
@@ -161,7 +181,7 @@ func TestClone_NoBranch(t *testing.T) {
 	cfg := makeConfig(dir, map[string]config.ProjectConfig{
 		"myapp": {Repo: "git@github.com:user/myapp.git"},
 	})
-	svc := project.NewService(cfg, mock)
+	svc := project.NewService(cfg, mock, &mockHook{})
 	if err := svc.Clone("myapp"); err != nil {
 		t.Fatalf("Clone() error = %v", err)
 	}
@@ -181,7 +201,7 @@ func TestClone_AlreadyCloned(t *testing.T) {
 	if err := os.MkdirAll(targetPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	svc := project.NewService(cfg, mock)
+	svc := project.NewService(cfg, mock, &mockHook{})
 	err := svc.Clone("myapp")
 	if !errors.Is(err, project.ErrAlreadyCloned) {
 		t.Fatalf("want ErrAlreadyCloned, got %v", err)
@@ -200,7 +220,7 @@ func TestClone_AlreadyCloned(t *testing.T) {
 
 func TestClone_UnknownProject(t *testing.T) {
 	cfg := makeConfig("/tmp", map[string]config.ProjectConfig{})
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	err := svc.Clone("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown project")
@@ -216,7 +236,7 @@ func TestClone_GitFailure(t *testing.T) {
 	cfg := makeConfig(dir, map[string]config.ProjectConfig{
 		"myapp": {Repo: "git@github.com:user/myapp.git"},
 	})
-	svc := project.NewService(cfg, mock)
+	svc := project.NewService(cfg, mock, &mockHook{})
 	err := svc.Clone("myapp")
 	if err == nil {
 		t.Fatal("expected error on git failure")
@@ -237,7 +257,7 @@ func TestCloneAll_MixedResults(t *testing.T) {
 		"existing": {Repo: "git@github.com:user/existing.git"},
 		"fail":     {Repo: "git@github.com:user/fail.git"},
 	})
-	svc := project.NewService(cfg, mock)
+	svc := project.NewService(cfg, mock, &mockHook{})
 	results := svc.CloneAll()
 
 	if len(results) != 3 {
@@ -261,7 +281,7 @@ func TestCloneAll_MixedResults(t *testing.T) {
 
 func TestCloneAll_Empty(t *testing.T) {
 	cfg := makeConfig("/tmp", map[string]config.ProjectConfig{})
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	results := svc.CloneAll()
 	if len(results) != 0 {
 		t.Errorf("got %d results, want 0", len(results))
@@ -301,7 +321,7 @@ func TestShow_BadRepoURL(t *testing.T) {
 	cfg := makeConfig("/home/user/projects", map[string]config.ProjectConfig{
 		"badrepo": {Repo: "https:///no-host/repo.git"},
 	})
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	_, err := svc.Show("badrepo")
 	if err == nil {
 		t.Fatal("Show() with bad repo URL = nil, want error")
@@ -315,9 +335,54 @@ func TestClone_BadRepoURL(t *testing.T) {
 	cfg := makeConfig("/home/user/projects", map[string]config.ProjectConfig{
 		"badrepo": {Repo: "https:///no-host/repo.git"},
 	})
-	svc := project.NewService(cfg, &mockGitRunner{})
+	svc := project.NewService(cfg, &mockGitRunner{}, &mockHook{})
 	err := svc.Clone("badrepo")
 	if err == nil {
 		t.Fatal("Clone() with bad repo URL = nil, want error")
+	}
+}
+
+// ── Hook integration ──────────────────────────────────────────────────────────
+
+func TestClone_TriggersHooks(t *testing.T) {
+	dir := t.TempDir()
+	mock := &mockGitRunner{}
+	hookMock := &mockHook{}
+	cfg := makeConfig(dir, map[string]config.ProjectConfig{
+		"myapp": {Repo: "git@github.com:user/myapp.git", DefaultBranch: "main"},
+	})
+	svc := project.NewService(cfg, mock, hookMock)
+	if err := svc.Clone("myapp"); err != nil {
+		t.Fatalf("Clone() error = %v", err)
+	}
+
+	if len(hookMock.calls) != 2 {
+		t.Fatalf("expected 2 hook calls, got %d", len(hookMock.calls))
+	}
+	if hookMock.calls[0].name != semconv.HookPreClone {
+		t.Errorf("first hook = %q, want %q", hookMock.calls[0].name, semconv.HookPreClone)
+	}
+	if hookMock.calls[1].name != semconv.HookPostClone {
+		t.Errorf("second hook = %q, want %q", hookMock.calls[1].name, semconv.HookPostClone)
+	}
+	if hookMock.calls[0].attrs[semconv.HookAttrProject] != "myapp" {
+		t.Errorf("project attr = %q", hookMock.calls[0].attrs[semconv.HookAttrProject])
+	}
+}
+
+func TestClone_PreHookFailure_StopsClone(t *testing.T) {
+	dir := t.TempDir()
+	mock := &mockGitRunner{}
+	hookMock := &mockHook{failOn: semconv.HookPreClone}
+	cfg := makeConfig(dir, map[string]config.ProjectConfig{
+		"myapp": {Repo: "git@github.com:user/myapp.git"},
+	})
+	svc := project.NewService(cfg, mock, hookMock)
+	err := svc.Clone("myapp")
+	if err == nil {
+		t.Error("expected error when pre-clone hook fails")
+	}
+	if len(mock.calls) != 0 {
+		t.Error("git clone should not be called when pre-clone hook fails")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/project"
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/tmux"
@@ -152,9 +153,9 @@ func runTUIInTmux(tmuxClient *tmux.Client) error {
 }
 
 func runTUIDirect(tmuxClient *tmux.Client) error {
-	wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient)
+	wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, &hooks.NoOp{})
 	sesSvc := newSessionService()
-	projSvc := project.NewService(cfg, project.NewRealGitRunner())
+	projSvc := project.NewService(cfg, project.NewRealGitRunner(), &hooks.NoOp{})
 
 	insideTmux := os.Getenv("TMUX") != ""
 	m := tui.NewModel(cfg, wtSvc, sesSvc, projSvc, tmuxClient, insideTmux)

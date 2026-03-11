@@ -8,9 +8,25 @@ import (
 
 // ProjectConfig holds per-project settings.
 type ProjectConfig struct {
-	Repo          string `toml:"repo"           validate:"omitempty"`
-	DefaultBranch string `toml:"default_branch" validate:"omitempty"`
-	EnvTemplate   string `toml:"env_template"   validate:"omitempty"`
+	Repo          string      `toml:"repo"           validate:"omitempty"`
+	DefaultBranch string      `toml:"default_branch" validate:"omitempty"`
+	EnvTemplate   string      `toml:"env_template"   validate:"omitempty"`
+	Files         []string    `toml:"files"          validate:"omitempty"`
+	Hooks         HooksConfig `toml:"hooks"`
+}
+
+// HooksConfig holds per-project lifecycle hook commands.
+type HooksConfig struct {
+	PreClone     string `toml:"pre-clone"`
+	PostClone    string `toml:"post-clone"`
+	PreWorktree  string `toml:"pre-worktree"`
+	PostWorktree string `toml:"post-worktree"`
+	PreCopy      string `toml:"pre-copy"`
+	PostCopy     string `toml:"post-copy"`
+	PreTemplate  string `toml:"pre-template"`
+	PostTemplate string `toml:"post-template"`
+	PreSession   string `toml:"pre-session"`
+	PostSession  string `toml:"post-session"`
 }
 
 // RepoPath parses a git remote URL and returns the directory path.

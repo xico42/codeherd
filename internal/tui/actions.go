@@ -1,8 +1,16 @@
 package tui
 
 import (
+	"fmt"
+	"path/filepath"
+
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/filecopy"
+	"github.com/xico42/codeherd/internal/herdtemplate"
+	"github.com/xico42/codeherd/internal/hooks"
+	projectpkg "github.com/xico42/codeherd/internal/project"
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/session"
 	"github.com/xico42/codeherd/internal/worktree"
@@ -16,9 +24,6 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	sesSvc := m.sesSvc
-	wtSvc := m.wtSvc
-	projSvc := m.projSvc
 	cfg := m.cfg
 	project := sel.Project
 	branch := sel.Branch
@@ -37,11 +42,16 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 		}
 
 		path := sel.Path
+		projCfg := cfg.Projects[project]
+		tmuxClient := m.tmuxClient
+
 		pending := &agentPickerPending{
-			project: project,
-			branch:  branch,
-			path:    path,
-			sesSvc:  sesSvc,
+			project:    project,
+			branch:     branch,
+			path:       path,
+			projCfg:    projCfg,
+			cfg:        cfg,
+			tmuxClient: tmuxClient,
 		}
 
 		if len(agents) == 1 {
@@ -49,6 +59,8 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 			agent, _ := cfg.AgentByName(agents[0])
 			agentCmd := agent.Command()
 			return m, func() tea.Msg {
+				h := hooks.New(projCfg.Hooks)
+				sesSvc := session.NewService(tmuxClient, h)
 				sessionID, err := sesSvc.Start(session.StartRequest{
 					Project: project,
 					Branch:  branch,
@@ -80,17 +92,28 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 			defaultBranch = p.DefaultBranch
 		}
 
+		projCfg := cfg.Projects[project]
+		tmuxClient := m.tmuxClient
+
 		if len(agents) == 1 {
 			agent, _ := cfg.AgentByName(agents[0])
 			agentCmd := agent.Command()
 			return m, func() tea.Msg {
-				if projSvc != nil {
-					_ = projSvc.Clone(project)
-				}
+				h := hooks.New(projCfg.Hooks)
+				projSvc := projectpkg.NewService(cfg, projectpkg.NewRealGitRunner(), h)
+				_ = projSvc.Clone(project)
+
+				wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, h)
 				result, err := wtSvc.New(project, defaultBranch)
 				if err != nil {
 					return errMsg{err: err}
 				}
+
+				if err := runFileCopyAndTemplate(cfg, projCfg, h, project, defaultBranch, result.Path); err != nil {
+					return errMsg{err: err}
+				}
+
+				sesSvc := session.NewService(tmuxClient, h)
 				sessionID, err := sesSvc.Start(session.StartRequest{
 					Project: project,
 					Branch:  defaultBranch,
@@ -107,11 +130,11 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 
 		// Multiple agents — show picker.
 		m.agentPicker = newAgentPicker(cfg, cfg.Defaults.Agent, &agentPickerPending{
-			project: project,
-			branch:  defaultBranch,
-			sesSvc:  sesSvc,
-			wtSvc:   wtSvc,
-			projSvc: projSvc,
+			project:    project,
+			branch:     defaultBranch,
+			projCfg:    projCfg,
+			cfg:        cfg,
+			tmuxClient: tmuxClient,
 		})
 		m.screen = screenAgentPicker
 		return m, nil
@@ -149,8 +172,6 @@ func (m Model) shellAction() tea.Cmd {
 	}
 
 	tmuxClient := m.tmuxClient
-	wtSvc := m.wtSvc
-	projSvc := m.projSvc
 	cfg := m.cfg
 	project := sel.Project
 	branch := sel.Branch
@@ -166,14 +187,22 @@ func (m Model) shellAction() tea.Cmd {
 			}
 			branch = defaultBranch
 
-			if projSvc != nil {
-				_ = projSvc.Clone(project)
-			}
+			projCfg := cfg.Projects[project]
+			h := hooks.New(projCfg.Hooks)
+
+			projSvc := projectpkg.NewService(cfg, projectpkg.NewRealGitRunner(), h)
+			_ = projSvc.Clone(project)
+
+			wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, h)
 			result, err := wtSvc.New(project, branch)
 			if err != nil {
 				return errMsg{err: err}
 			}
 			path = result.Path
+
+			if err := runFileCopyAndTemplate(cfg, projCfg, h, project, branch, path); err != nil {
+				return errMsg{err: err}
+			}
 		}
 
 		// If the shell session already exists, attach by stable session ID.
@@ -202,10 +231,13 @@ func (m Model) cloneAction() tea.Cmd {
 		return nil
 	}
 
-	projSvc := m.projSvc
+	cfg := m.cfg
 	project := sel.Project
+	projCfg := cfg.Projects[project]
 
 	return func() tea.Msg {
+		h := hooks.New(projCfg.Hooks)
+		projSvc := projectpkg.NewService(cfg, projectpkg.NewRealGitRunner(), h)
 		if err := projSvc.Clone(project); err != nil {
 			return errMsg{err: err}
 		}
@@ -336,14 +368,23 @@ func (m Model) confirmDeleteNo() (tea.Model, tea.Cmd) {
 // startSessionAfterCreate starts an agent session for a newly created worktree.
 func (m Model) startSessionAfterCreate(msg worktreeCreatedMsg) tea.Cmd {
 	cfg := m.cfg
-	sesSvc := m.sesSvc
+	tmuxClient := m.tmuxClient
+	projCfg := cfg.Projects[msg.project]
 
 	return func() tea.Msg {
 		agent, err := cfg.AgentByName(msg.agent)
 		if err != nil {
 			return errMsg{err: err}
 		}
+
+		h := hooks.New(projCfg.Hooks)
+
+		if err := runFileCopyAndTemplate(cfg, projCfg, h, msg.project, msg.branch, msg.path); err != nil {
+			return errMsg{err: err}
+		}
+
 		agentCmd := agent.Command()
+		sesSvc := session.NewService(tmuxClient, h)
 		sessionID, err := sesSvc.Start(session.StartRequest{
 			Project: msg.project,
 			Branch:  msg.branch,
@@ -356,4 +397,38 @@ func (m Model) startSessionAfterCreate(msg worktreeCreatedMsg) tea.Cmd {
 		}
 		return attachMsg{session: sessionID}
 	}
+}
+
+// runFileCopyAndTemplate runs file copy and herd template processing for a worktree.
+func runFileCopyAndTemplate(cfg *config.Config, projCfg config.ProjectConfig, h hooks.Hook, proj, branch, wtPath string) error {
+	if len(projCfg.Files) > 0 {
+		repoPath, _ := config.RepoPath(projCfg.Repo)
+		cloneDir := filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
+		copySvc := filecopy.New(h)
+		attrs := map[string]string{
+			semconv.HookAttrProject:      proj,
+			semconv.HookAttrBranch:       branch,
+			semconv.HookAttrWorktreePath: wtPath,
+		}
+		if err := copySvc.Copy(projCfg.Files, cloneDir, wtPath, attrs); err != nil {
+			return fmt.Errorf("file copy: %w", err)
+		}
+	}
+
+	tmplSvc := herdtemplate.New(h)
+	tmplAttrs := map[string]string{
+		semconv.HookAttrProject:      proj,
+		semconv.HookAttrBranch:       branch,
+		semconv.HookAttrWorktreePath: wtPath,
+	}
+	if err := tmplSvc.Process(herdtemplate.ProcessContext{
+		Project:      proj,
+		Branch:       branch,
+		WorktreePath: wtPath,
+		SessionName:  semconv.SessionName(proj, branch),
+	}, tmplAttrs); err != nil {
+		return fmt.Errorf("template processing: %w", err)
+	}
+
+	return nil
 }

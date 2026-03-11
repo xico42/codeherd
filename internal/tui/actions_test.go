@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/tmux"
 )
@@ -992,6 +993,61 @@ func TestStartSessionAfterCreate_agentNotFound(t *testing.T) {
 	}
 }
 
+// ── runFileCopyAndTemplate tests ──────────────────────────────────────────────
+
+func TestRunFileCopyAndTemplate_noFiles_noTemplates(t *testing.T) {
+	cfg := &config.Config{}
+	projCfg := config.ProjectConfig{}
+	h := &hooks.NoOp{}
+
+	// With no files and a non-existent worktree path, template processing
+	// should succeed (no .herd files to find).
+	err := runFileCopyAndTemplate(cfg, projCfg, h, "myapp", "feat", t.TempDir())
+	if err != nil {
+		t.Errorf("runFileCopyAndTemplate() = %v, want nil", err)
+	}
+}
+
+func TestRunFileCopyAndTemplate_withFiles_sourceNotFound(t *testing.T) {
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: t.TempDir()},
+	}
+	projCfg := config.ProjectConfig{
+		Repo:  "git@github.com:user/myapp.git",
+		Files: []string{"nonexistent.txt"},
+	}
+	h := &hooks.NoOp{}
+
+	err := runFileCopyAndTemplate(cfg, projCfg, h, "myapp", "feat", t.TempDir())
+	if err == nil {
+		t.Error("runFileCopyAndTemplate() with missing source file should return error")
+	}
+}
+
+// ── cloneAction with per-project hooks tests ─────────────────────────────────
+
+func TestCloneAction_projectItem_returnsCmd(t *testing.T) {
+	cfg := &config.Config{
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git"},
+		},
+	}
+	items := []Item{{Project: "myapp", Group: groupProject, Cloned: false}}
+	listItems := make([]list.Item, len(items))
+	for i, it := range items {
+		listItems[i] = it
+	}
+	m := Model{screen: screenList, cfg: cfg}
+	m.list = newList(listItems)
+
+	cmd := m.cloneAction()
+	if cmd == nil {
+		t.Fatal("cloneAction() on uncloned project should return non-nil cmd")
+	}
+	// We don't execute the cmd as it would try real git operations,
+	// but we verify it's properly constructed.
+}
+
 // ── worktreeCreatedMsg with attach tests ──────────────────────────────────────
 
 func TestModel_Update_worktreeCreatedMsg_withAttachAndAgent(t *testing.T) {
@@ -1002,7 +1058,7 @@ func TestModel_Update_worktreeCreatedMsg_withAttachAndAgent(t *testing.T) {
 	}
 	m := Model{screen: screenForm, cfg: cfg}
 	m.list = newList(nil)
-	m.form = newFormModel(formContext{project: "myapp", baseBranch: "main"}, cfg, nil, nil)
+	m.form = newFormModel(formContext{project: "myapp", baseBranch: "main"}, cfg, nil)
 
 	updated, cmd := m.Update(worktreeCreatedMsg{
 		project: "myapp",

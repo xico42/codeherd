@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/tmux"
 )
@@ -35,11 +36,12 @@ func (e *SessionExistsError) Unwrap() error {
 // Service manages codeherd tmux sessions and their persisted state.
 type Service struct {
 	tmux *tmux.Client
+	hook hooks.Hook
 }
 
 // NewService creates a Service using the given tmux client.
-func NewService(tmux *tmux.Client) *Service {
-	return &Service{tmux: tmux}
+func NewService(tmux *tmux.Client, hook hooks.Hook) *Service {
+	return &Service{tmux: tmux, hook: hook}
 }
 
 // StartRequest holds parameters for starting a new session.
@@ -78,6 +80,17 @@ func (s *Service) Start(req StartRequest) (string, error) {
 		return "", fmt.Errorf("checking path: %w", err)
 	}
 
+	attrs := map[string]string{
+		semconv.HookAttrProject:      req.Project,
+		semconv.HookAttrBranch:       req.Branch,
+		semconv.HookAttrWorktreePath: req.Path,
+		semconv.HookAttrSessionName:  name,
+	}
+
+	if err := s.hook.Trigger(semconv.HookPreSession, attrs, req.Path); err != nil {
+		return "", fmt.Errorf("pre-session hook: %w", err)
+	}
+
 	env := make(map[string]string)
 	for k, v := range req.Env {
 		env[k] = v
@@ -99,6 +112,11 @@ func (s *Service) Start(req StartRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("getting session id: %w", err)
 	}
+
+	if err := s.hook.Trigger(semconv.HookPostSession, attrs, req.Path); err != nil {
+		return "", fmt.Errorf("post-session hook: %w", err)
+	}
+
 	return id, nil
 }
 

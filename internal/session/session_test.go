@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"testing"
 
@@ -24,10 +25,28 @@ func (m *mockRunner) Run(args ...string) (string, string, int, error) {
 	return m.stdout, m.stderr, m.exitCode, m.err
 }
 
+type mockHook struct {
+	calls  []hookCall
+	failOn string
+}
+type hookCall struct {
+	name    string
+	attrs   map[string]string
+	workDir string
+}
+
+func (m *mockHook) Trigger(name string, attrs map[string]string, workDir string) error {
+	m.calls = append(m.calls, hookCall{name, attrs, workDir})
+	if m.failOn == name {
+		return fmt.Errorf("hook %s failed", name)
+	}
+	return nil
+}
+
 func newService(t *testing.T, r *mockRunner) *session.Service {
 	t.Helper()
 	tc := tmux.NewClient(r)
-	return session.NewService(tc)
+	return session.NewService(tc, &mockHook{})
 }
 
 func TestStart_OK(t *testing.T) {
@@ -41,7 +60,7 @@ func TestStart_OK(t *testing.T) {
 		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
 	}}
 	tc := tmux.NewClient(r2)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	wtDir := t.TempDir()
 	sessionID, err := svc.Start(session.StartRequest{
@@ -69,7 +88,7 @@ func TestStart_DuplicateSession(t *testing.T) {
 		{exitCode: 0, stdout: line},
 	}}
 	tc := tmux.NewClient(r2)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	_, err := svc.Start(session.StartRequest{
 		Project: "myapp",
@@ -92,7 +111,7 @@ func TestStart_DuplicateSession_Prefixed(t *testing.T) {
 		{exitCode: 0, stdout: line},
 	}}
 	tc := tmux.NewClient(r2)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	_, err := svc.Start(session.StartRequest{
 		Project: "myapp",
@@ -131,7 +150,7 @@ func TestSetStatus_Running(t *testing.T) {
 		{exitCode: 0},               // rename-session (remove ⚡ prefix)
 	}}
 	tc := tmux.NewClient(r)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	if err := svc.SetStatus("myapp-feature", "running", ""); err != nil {
 		t.Fatalf("SetStatus() error = %v", err)
@@ -159,7 +178,7 @@ func TestSetStatus_Waiting(t *testing.T) {
 		{exitCode: 0},               // rename-session (add ⚡ prefix)
 	}}
 	tc := tmux.NewClient(r)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	if err := svc.SetStatus("myapp-feature", "waiting", "Claude needs input"); err != nil {
 		t.Fatalf("SetStatus() error = %v", err)
@@ -198,7 +217,7 @@ func TestSetStatus_SessionNotFound(t *testing.T) {
 		{exitCode: 1}, // list-sessions exit 1 = no sessions
 	}}
 	tc := tmux.NewClient(r)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	if err := svc.SetStatus("myapp-feature", "running", ""); err != nil {
 		t.Fatalf("SetStatus() should suppress not-found: %v", err)
@@ -268,7 +287,7 @@ func TestList_WithOptions(t *testing.T) {
 		{exitCode: 0, stdout: lines},
 	}}
 	tc := tmux.NewClient(r2)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	sessions, err := svc.List()
 	if err != nil {
@@ -305,7 +324,7 @@ func TestShow_OK(t *testing.T) {
 		{exitCode: 0, stdout: line},
 	}}
 	tc := tmux.NewClient(r2)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	info, err := svc.Show("myapp-feature")
 	if err != nil {
@@ -335,7 +354,7 @@ func TestShow_WaitingSession(t *testing.T) {
 		{exitCode: 0, stdout: line},
 	}}
 	tc := tmux.NewClient(r2)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	info, err := svc.Show("myapp-feature")
 	if err != nil {
@@ -369,7 +388,7 @@ func TestStop_OK(t *testing.T) {
 		{exitCode: 0},               // kill-session
 	}}
 	tc := tmux.NewClient(r2)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	if err := svc.Stop("myapp-feature"); err != nil {
 		t.Fatalf("Stop() error = %v", err)
@@ -384,7 +403,7 @@ func TestStop_WaitingSession(t *testing.T) {
 		{exitCode: 0},               // kill-session
 	}}
 	tc := tmux.NewClient(r2)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	if err := svc.Stop("myapp-feature"); err != nil {
 		t.Fatalf("Stop() error = %v", err)
@@ -450,7 +469,7 @@ func TestStop_KillError(t *testing.T) {
 		{exitCode: 1, err: errors.New("kill failed")}, // kill-session
 	}}
 	tc := tmux.NewClient(r)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	if err := svc.Stop("myapp-feature"); err == nil {
 		t.Fatal("expected error when kill fails")
@@ -497,7 +516,7 @@ func TestStart_SessionIDError(t *testing.T) {
 		{exitCode: 1}, // display-message → fails
 	}}
 	tc := tmux.NewClient(r2)
-	svc := session.NewService(tc)
+	svc := session.NewService(tc, &mockHook{})
 
 	_, err := svc.Start(session.StartRequest{
 		Project: "myapp",
@@ -507,5 +526,41 @@ func TestStart_SessionIDError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when SessionID fails")
+	}
+}
+
+func TestStart_TriggersHooks(t *testing.T) {
+	r2 := &mockRunnerSequence{responses: []mockResponse{
+		{exitCode: 1},                 // list-sessions → no sessions
+		{exitCode: 0},                 // new-session → ok
+		{exitCode: 0},                 // set-option status
+		{exitCode: 0},                 // set-option started_at
+		{exitCode: 0},                 // set-option canonical_name
+		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
+	}}
+	tc := tmux.NewClient(r2)
+	hookMock := &mockHook{}
+	svc := session.NewService(tc, hookMock)
+
+	wtDir := t.TempDir()
+	_, err := svc.Start(session.StartRequest{
+		Project: "myapp",
+		Branch:  "feature",
+		Path:    wtDir,
+		Cmd:     "claude",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	if len(hookMock.calls) != 2 {
+		t.Fatalf("expected 2 hook calls, got %d", len(hookMock.calls))
+	}
+	if hookMock.calls[0].name != semconv.HookPreSession {
+		t.Errorf("first hook = %q, want %q", hookMock.calls[0].name, semconv.HookPreSession)
+	}
+	if hookMock.calls[1].name != semconv.HookPostSession {
+		t.Errorf("second hook = %q, want %q", hookMock.calls[1].name, semconv.HookPostSession)
 	}
 }

@@ -24,7 +24,7 @@ func TestNewFormModel_setsContextFields(t *testing.T) {
 		},
 	}
 
-	f := newFormModel(ctx, cfg, nil, nil)
+	f := newFormModel(ctx, cfg, nil)
 
 	if f.project != "myapp" {
 		t.Errorf("project = %q, want %q", f.project, "myapp")
@@ -45,7 +45,7 @@ func TestNewFormModel_singleAgent(t *testing.T) {
 		},
 	}
 
-	f := newFormModel(ctx, cfg, nil, nil)
+	f := newFormModel(ctx, cfg, nil)
 
 	if f.agent != "claude" {
 		t.Errorf("agent = %q, want %q (auto-selected single agent)", f.agent, "claude")
@@ -61,7 +61,7 @@ func TestNewFormModel_multipleAgents(t *testing.T) {
 		},
 	}
 
-	f := newFormModel(ctx, cfg, nil, nil)
+	f := newFormModel(ctx, cfg, nil)
 
 	// With multiple agents, the first sorted agent should be pre-selected.
 	if f.agent != "aider" {
@@ -73,7 +73,7 @@ func TestNewFormModel_noAgents(t *testing.T) {
 	ctx := formContext{project: "myapp", baseBranch: "main"}
 	cfg := &config.Config{}
 
-	f := newFormModel(ctx, cfg, nil, nil)
+	f := newFormModel(ctx, cfg, nil)
 
 	if f.agent != "" {
 		t.Errorf("agent = %q, want empty with no agents configured", f.agent)
@@ -87,7 +87,7 @@ func TestFormModel_View(t *testing.T) {
 			"claude": {Cmd: "claude"},
 		},
 	}
-	f := newFormModel(ctx, cfg, nil, nil)
+	f := newFormModel(ctx, cfg, nil)
 
 	out := f.View()
 	if out == "" {
@@ -98,7 +98,7 @@ func TestFormModel_View(t *testing.T) {
 func TestFormModel_completedInitiallyFalse(t *testing.T) {
 	ctx := formContext{project: "api", baseBranch: "main"}
 	cfg := &config.Config{}
-	f := newFormModel(ctx, cfg, nil, nil)
+	f := newFormModel(ctx, cfg, nil)
 
 	if f.completed() {
 		t.Error("form should not be completed initially")
@@ -203,7 +203,7 @@ func TestUpdateForm_escKey(t *testing.T) {
 	cfg := &config.Config{}
 	m := Model{screen: screenForm}
 	m.list = newList(nil)
-	m.form = newFormModel(ctx, cfg, nil, nil)
+	m.form = newFormModel(ctx, cfg, nil)
 
 	msg := tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape})
 	updated, _ := m.updateForm(msg)
@@ -226,7 +226,7 @@ func TestUpdateForm_nonEscKey(t *testing.T) {
 	}
 	m := Model{screen: screenForm}
 	m.list = newList(nil)
-	m.form = newFormModel(ctx, cfg, nil, nil)
+	m.form = newFormModel(ctx, cfg, nil)
 	// Initialize the form so it can handle updates.
 	m.form.Init()
 
@@ -246,7 +246,7 @@ func TestFormModel_submit_returnsCmd(t *testing.T) {
 			"claude": {Cmd: "claude"},
 		},
 	}
-	f := newFormModel(ctx, cfg, nil, nil)
+	f := newFormModel(ctx, cfg, nil)
 	f.branch = "my-feature"
 
 	cmd := f.submit()
@@ -258,7 +258,7 @@ func TestFormModel_submit_returnsCmd(t *testing.T) {
 func TestFormModel_submit_withoutBaseBranch_returnsCmd(t *testing.T) {
 	ctx := formContext{project: "api", baseBranch: ""}
 	cfg := &config.Config{}
-	f := newFormModel(ctx, cfg, nil, nil)
+	f := newFormModel(ctx, cfg, nil)
 	f.branch = "my-feature"
 
 	cmd := f.submit()

@@ -8,19 +8,21 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/project"
+	"github.com/xico42/codeherd/internal/hooks"
+	projectpkg "github.com/xico42/codeherd/internal/project"
 	"github.com/xico42/codeherd/internal/session"
+	"github.com/xico42/codeherd/internal/tmux"
 	"github.com/xico42/codeherd/internal/worktree"
 )
 
 // agentPickerPending holds the context needed to start a session after agent selection.
 type agentPickerPending struct {
-	project string
-	branch  string
-	path    string
-	sesSvc  *session.Service
-	wtSvc   *worktree.Service
-	projSvc *project.Service
+	project    string
+	branch     string
+	path       string // non-empty for groupWorktree
+	projCfg    config.ProjectConfig
+	cfg        *config.Config
+	tmuxClient *tmux.Client
 }
 
 // agentPickerModel shows a compact list of named agents.
@@ -84,25 +86,31 @@ func (p *agentPickerModel) submit() tea.Cmd {
 
 	pending := p.pending
 	agentCmd := agent.Command()
+	cfg := p.cfg
 
 	return func() tea.Msg {
 		path := pending.path
+		h := hooks.New(pending.projCfg.Hooks)
 
 		// If no path, need to clone + create worktree.
 		if path == "" {
-			if pending.projSvc != nil {
-				_ = pending.projSvc.Clone(pending.project)
+			projSvc := projectpkg.NewService(cfg, projectpkg.NewRealGitRunner(), h)
+			_ = projSvc.Clone(pending.project)
+
+			wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), pending.tmuxClient, h)
+			result, err := wtSvc.New(pending.project, pending.branch)
+			if err != nil {
+				return errMsg{err: err}
 			}
-			if pending.wtSvc != nil {
-				result, err := pending.wtSvc.New(pending.project, pending.branch)
-				if err != nil {
-					return errMsg{err: err}
-				}
-				path = result.Path
+			path = result.Path
+
+			if err := runFileCopyAndTemplate(cfg, pending.projCfg, h, pending.project, pending.branch, path); err != nil {
+				return errMsg{err: err}
 			}
 		}
 
-		sessionID, err := pending.sesSvc.Start(session.StartRequest{
+		sesSvc := session.NewService(pending.tmuxClient, h)
+		sessionID, err := sesSvc.Start(session.StartRequest{
 			Project: pending.project,
 			Branch:  pending.branch,
 			Path:    path,

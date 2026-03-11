@@ -5,11 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/filecopy"
+	"github.com/xico42/codeherd/internal/herdtemplate"
+	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/session"
 	"github.com/xico42/codeherd/internal/tmux"
@@ -17,7 +22,7 @@ import (
 )
 
 func newWorktreeService() *worktree.Service {
-	return worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()))
+	return worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), &hooks.NoOp{})
 }
 
 var worktreeCmd = &cobra.Command{
@@ -75,7 +80,9 @@ var worktreeNewCmd = &cobra.Command{
 		project, branch := args[0], args[1]
 		fmt.Fprintf(cmd.OutOrStdout(), "Creating worktree %s/%s...  ", project, branch)
 
-		svc := newWorktreeService()
+		projCfg := cfg.Projects[project]
+		h := hooks.New(projCfg.Hooks)
+		svc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), h)
 		var result worktree.NewResult
 		var err error
 		if worktreeNewFrom != "" {
@@ -86,6 +93,37 @@ var worktreeNewCmd = &cobra.Command{
 		if err != nil {
 			fmt.Fprintln(cmd.OutOrStdout())
 			return worktreeErr(cmd, project, branch, err)
+		}
+
+		// File copy
+		if len(projCfg.Files) > 0 {
+			repoPath, _ := config.RepoPath(projCfg.Repo)
+			cloneDir := filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
+			copySvc := filecopy.New(h)
+			attrs := map[string]string{
+				semconv.HookAttrProject:      project,
+				semconv.HookAttrBranch:       branch,
+				semconv.HookAttrWorktreePath: result.Path,
+			}
+			if err := copySvc.Copy(projCfg.Files, cloneDir, result.Path, attrs); err != nil {
+				return fmt.Errorf("copying files: %w", err)
+			}
+		}
+
+		// Template processing
+		tmplSvc := herdtemplate.New(h)
+		tmplAttrs := map[string]string{
+			semconv.HookAttrProject:      project,
+			semconv.HookAttrBranch:       branch,
+			semconv.HookAttrWorktreePath: result.Path,
+		}
+		if err := tmplSvc.Process(herdtemplate.ProcessContext{
+			Project:      project,
+			Branch:       branch,
+			WorktreePath: result.Path,
+			SessionName:  semconv.SessionName(project, branch),
+		}, tmplAttrs); err != nil {
+			return fmt.Errorf("processing templates: %w", err)
 		}
 
 		fmt.Fprintln(cmd.OutOrStdout(), "done")
@@ -111,7 +149,7 @@ var worktreeNewCmd = &cobra.Command{
 			name := semconv.SessionName(project, branch)
 			fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
 
-			sesSvc := newSessionService()
+			sesSvc := session.NewService(tmux.NewClient(tmux.NewRealRunner()), h)
 			sessionID, err := sesSvc.Start(session.StartRequest{
 				Project: project,
 				Branch:  branch,

@@ -8,7 +8,9 @@ import (
 	"charm.land/huh/v2"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/project"
+	"github.com/xico42/codeherd/internal/hooks"
+	projectpkg "github.com/xico42/codeherd/internal/project"
+	"github.com/xico42/codeherd/internal/tmux"
 	"github.com/xico42/codeherd/internal/worktree"
 )
 
@@ -24,9 +26,9 @@ type formModel struct {
 	project    string
 	baseBranch string
 
-	// Services
-	wtSvc   *worktree.Service
-	projSvc *project.Service
+	// Dependencies for creating per-project services
+	cfg        *config.Config
+	tmuxClient *tmux.Client
 }
 
 type formContext struct {
@@ -34,13 +36,13 @@ type formContext struct {
 	baseBranch string
 }
 
-func newFormModel(ctx formContext, cfg *config.Config, wtSvc *worktree.Service, projSvc *project.Service) *formModel {
+func newFormModel(ctx formContext, cfg *config.Config, tmuxClient *tmux.Client) *formModel {
 	m := &formModel{
 		project:    ctx.project,
 		baseBranch: ctx.baseBranch,
 		attach:     true,
-		wtSvc:      wtSvc,
-		projSvc:    projSvc,
+		cfg:        cfg,
+		tmuxClient: tmuxClient,
 	}
 
 	agents := cfg.AgentNames()
@@ -118,14 +120,16 @@ func (f *formModel) submit() tea.Cmd {
 	baseBranch := f.baseBranch
 	attach := f.attach
 	agent := f.agent
-	wtSvc := f.wtSvc
-	projSvc := f.projSvc
+	cfg := f.cfg
+	tmuxClient := f.tmuxClient
+	projCfg := cfg.Projects[project]
 
 	return func() tea.Msg {
-		if projSvc != nil {
-			_ = projSvc.Clone(project)
-		}
+		h := hooks.New(projCfg.Hooks)
+		projSvc := projectpkg.NewService(cfg, projectpkg.NewRealGitRunner(), h)
+		_ = projSvc.Clone(project)
 
+		wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, h)
 		var result worktree.NewResult
 		var err error
 		if baseBranch != "" {
@@ -168,7 +172,7 @@ func (m Model) showForm() (tea.Model, tea.Cmd) {
 		ctx.baseBranch = sel.Branch
 	}
 
-	m.form = newFormModel(ctx, m.cfg, m.wtSvc, m.projSvc)
+	m.form = newFormModel(ctx, m.cfg, m.tmuxClient)
 	m.screen = screenForm
 	return m, m.form.Init()
 }

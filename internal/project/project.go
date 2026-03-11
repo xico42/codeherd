@@ -9,6 +9,8 @@ import (
 	"sort"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/hooks"
+	"github.com/xico42/codeherd/internal/semconv"
 )
 
 // ErrAlreadyCloned is returned by Clone when the target path already exists.
@@ -62,13 +64,14 @@ type CloneResult struct {
 
 // Service provides project management operations.
 type Service struct {
-	cfg *config.Config
-	git GitRunner
+	cfg  *config.Config
+	git  GitRunner
+	hook hooks.Hook
 }
 
 // NewService creates a Service using the given config and GitRunner.
-func NewService(cfg *config.Config, git GitRunner) *Service {
-	return &Service{cfg: cfg, git: git}
+func NewService(cfg *config.Config, git GitRunner, hook hooks.Hook) *Service {
+	return &Service{cfg: cfg, git: git, hook: hook}
 }
 
 // List returns all configured projects sorted by name. No filesystem access.
@@ -126,12 +129,28 @@ func (s *Service) Clone(name string) error {
 	if _, err := os.Stat(absPath); err == nil {
 		return &AlreadyClonedError{Path: absPath}
 	}
+
+	attrs := map[string]string{
+		semconv.HookAttrProject:  name,
+		semconv.HookAttrRepo:     p.Repo,
+		semconv.HookAttrCloneDir: absPath,
+	}
+
+	if err := s.hook.Trigger(semconv.HookPreClone, attrs, s.cfg.Defaults.ProjectsDir); err != nil {
+		return fmt.Errorf("pre-clone hook: %w", err)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 		return fmt.Errorf("creating parent directories: %w", err)
 	}
 	if err := s.git.Clone(p.Repo, absPath, p.DefaultBranch); err != nil {
 		return fmt.Errorf("cloning repository: %w", err)
 	}
+
+	if err := s.hook.Trigger(semconv.HookPostClone, attrs, s.cfg.Defaults.ProjectsDir); err != nil {
+		return fmt.Errorf("post-clone hook: %w", err)
+	}
+
 	return nil
 }
 

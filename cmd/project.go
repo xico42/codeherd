@@ -3,10 +3,12 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/project"
 )
 
@@ -21,7 +23,7 @@ var projectListCmd = &cobra.Command{
 	Short: "List all configured projects",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := project.NewService(cfg, project.NewRealGitRunner())
+		svc := project.NewService(cfg, project.NewRealGitRunner(), &hooks.NoOp{})
 		entries := svc.List()
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
 		fmt.Fprintln(w, "NAME\tREPO\tBRANCH")
@@ -37,7 +39,7 @@ var projectShowCmd = &cobra.Command{
 	Short: "Show config for a project",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := project.NewService(cfg, project.NewRealGitRunner())
+		svc := project.NewService(cfg, project.NewRealGitRunner(), &hooks.NoOp{})
 		e, err := svc.Show(args[0])
 		if err != nil {
 			return fmt.Errorf("show project: %w", err)
@@ -62,21 +64,27 @@ var projectCloneCmd = &cobra.Command{
 	Use:   "clone [<name>]",
 	Short: "Clone a project's repo into projects_dir",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := project.NewService(cfg, project.NewRealGitRunner())
-
 		if cloneAll {
-			results := svc.CloneAll()
+			names := make([]string, 0, len(cfg.Projects))
+			for name := range cfg.Projects {
+				names = append(names, name)
+			}
+			sort.Strings(names)
 			hadFailure := false
-			for _, r := range results {
+			for _, name := range names {
+				projCfg := cfg.Projects[name]
+				h := hooks.New(projCfg.Hooks)
+				svc := project.NewService(cfg, project.NewRealGitRunner(), h)
+				err := svc.Clone(name)
 				switch {
-				case r.Err == nil:
-					fmt.Fprintf(cmd.OutOrStdout(), "Cloning %s... done\n", r.Name)
+				case err == nil:
+					fmt.Fprintf(cmd.OutOrStdout(), "Cloning %s... done\n", name)
 				default:
 					var ace *project.AlreadyClonedError
-					if errors.As(r.Err, &ace) {
+					if errors.As(err, &ace) {
 						fmt.Fprintf(cmd.OutOrStdout(), "Warning: %s\n", ace)
 					} else {
-						fmt.Fprintf(cmd.ErrOrStderr(), "Error: failed to clone %s: %v\n", r.Name, r.Err)
+						fmt.Fprintf(cmd.ErrOrStderr(), "Error: failed to clone %s: %v\n", name, err)
 						hadFailure = true
 					}
 				}
@@ -91,6 +99,9 @@ var projectCloneCmd = &cobra.Command{
 			return fmt.Errorf("requires a project name, or use --all")
 		}
 		name := args[0]
+		projCfg := cfg.Projects[name]
+		h := hooks.New(projCfg.Hooks)
+		svc := project.NewService(cfg, project.NewRealGitRunner(), h)
 		fmt.Fprintf(cmd.OutOrStdout(), "Cloning %s... ", name)
 		err := svc.Clone(name)
 		switch {

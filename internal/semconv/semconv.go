@@ -25,6 +25,30 @@ const (
 	CodeherdSessionName = "codeherd"
 )
 
+// Hook lifecycle names.
+const (
+	HookPreClone     = "pre-clone"
+	HookPostClone    = "post-clone"
+	HookPreWorktree  = "pre-worktree"
+	HookPostWorktree = "post-worktree"
+	HookPreCopy      = "pre-copy"
+	HookPostCopy     = "post-copy"
+	HookPreTemplate  = "pre-template"
+	HookPostTemplate = "post-template"
+	HookPreSession   = "pre-session"
+	HookPostSession  = "post-session"
+)
+
+// Hook attributes — environment variable names passed to hook commands.
+const (
+	HookAttrProject      = "CODEHERD_PROJECT"
+	HookAttrBranch       = "CODEHERD_BRANCH"
+	HookAttrRepo         = "CODEHERD_REPO"
+	HookAttrCloneDir     = "CODEHERD_CLONE_DIR"
+	HookAttrWorktreePath = "CODEHERD_WORKTREE_PATH"
+	HookAttrSessionName  = "CODEHERD_SESSION_NAME"
+)
+
 func FlattenBranch(branch string) string {
 	return strings.ReplaceAll(branch, "/", "-")
 }

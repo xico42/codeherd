@@ -97,6 +97,34 @@ func TestConstants(t *testing.T) {
 	}
 }
 
+func TestHookConstants_NotEmpty(t *testing.T) {
+	hooks := []string{
+		semconv.HookPreClone, semconv.HookPostClone,
+		semconv.HookPreWorktree, semconv.HookPostWorktree,
+		semconv.HookPreCopy, semconv.HookPostCopy,
+		semconv.HookPreTemplate, semconv.HookPostTemplate,
+		semconv.HookPreSession, semconv.HookPostSession,
+	}
+	for _, h := range hooks {
+		if h == "" {
+			t.Errorf("hook constant is empty")
+		}
+	}
+}
+
+func TestHookAttrConstants_HavePrefix(t *testing.T) {
+	attrs := []string{
+		semconv.HookAttrProject, semconv.HookAttrBranch,
+		semconv.HookAttrRepo, semconv.HookAttrCloneDir,
+		semconv.HookAttrWorktreePath, semconv.HookAttrSessionName,
+	}
+	for _, a := range attrs {
+		if !strings.HasPrefix(a, "CODEHERD_") {
+			t.Errorf("attribute %q missing CODEHERD_ prefix", a)
+		}
+	}
+}
+
 func TestNewSemconvConstants(t *testing.T) {
 	if semconv.TmuxOptionCanonicalName != "@codeherd_canonical_name" {
 		t.Errorf("TmuxOptionCanonicalName = %q", semconv.TmuxOptionCanonicalName)

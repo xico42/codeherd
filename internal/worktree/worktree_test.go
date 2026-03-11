@@ -13,6 +13,24 @@ import (
 	"github.com/xico42/codeherd/internal/tmux"
 )
 
+type mockHook struct {
+	calls  []hookCall
+	failOn string
+}
+type hookCall struct {
+	name    string
+	attrs   map[string]string
+	workDir string
+}
+
+func (m *mockHook) Trigger(name string, attrs map[string]string, workDir string) error {
+	m.calls = append(m.calls, hookCall{name, attrs, workDir})
+	if m.failOn == name {
+		return fmt.Errorf("hook %s failed", name)
+	}
+	return nil
+}
+
 // TestNewRealWorktreeRunner verifies the constructor returns a non-nil runner.
 func TestNewRealWorktreeRunner(t *testing.T) {
 	r := NewRealWorktreeRunner()
@@ -139,7 +157,7 @@ func makeService(t *testing.T, git WorktreeRunner, tmuxRunner tmux.Runner) (*Ser
 		},
 	}
 	tc := tmux.NewClient(tmuxRunner)
-	return NewService(cfg, git, tc), tmpDir
+	return NewService(cfg, git, tc, &mockHook{}), tmpDir
 }
 
 // cloneDir returns the expected clone path for "myapp" in tmpDir.
@@ -294,7 +312,7 @@ func TestService_NewFrom_withEnvTemplate(t *testing.T) {
 		},
 	}
 	tc := tmux.NewClient(&mockTmuxRunner{})
-	svc := NewService(cfg, git, tc)
+	svc := NewService(cfg, git, tc, &mockHook{})
 
 	cloneDir := filepath.Join(tmpDir, "github.com", "user", "myapp")
 	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
@@ -525,7 +543,7 @@ func TestService_resolvePaths_invalidRepo(t *testing.T) {
 		},
 	}
 	tc := tmux.NewClient(&mockTmuxRunner{})
-	svc := NewService(cfg, &mockGit{}, tc)
+	svc := NewService(cfg, &mockGit{}, tc, &mockHook{})
 
 	_, err := svc.New("badrepo", "feature")
 	if err == nil {
@@ -578,7 +596,7 @@ func TestService_New_withEnvTemplate(t *testing.T) {
 		},
 	}
 	tc := tmux.NewClient(&mockTmuxRunner{})
-	svc = NewService(cfg, git, tc)
+	svc = NewService(cfg, git, tc, &mockHook{})
 
 	result, err := svc.New("myapp", "feature")
 	if err != nil {
@@ -606,7 +624,7 @@ func TestService_Env_badRepoURL(t *testing.T) {
 		},
 	}
 	tc := tmux.NewClient(&mockTmuxRunner{})
-	svc := NewService(cfg, &mockGit{}, tc)
+	svc := NewService(cfg, &mockGit{}, tc, &mockHook{})
 
 	_, err := svc.Env("badrepo", "feature", false)
 	if err == nil {
@@ -651,7 +669,7 @@ func TestService_Env_templateReadError(t *testing.T) {
 		},
 	}
 	tc := tmux.NewClient(&mockTmuxRunner{})
-	svc := NewService(cfg, &mockGit{}, tc)
+	svc := NewService(cfg, &mockGit{}, tc, &mockHook{})
 
 	_, err := svc.Env("myapp", "feature", false)
 	if err == nil {
@@ -808,7 +826,7 @@ func TestService_Env_configTemplate(t *testing.T) {
 		},
 	}
 	tc := tmux.NewClient(&mockTmuxRunner{})
-	svc := NewService(cfg, &mockGit{}, tc)
+	svc := NewService(cfg, &mockGit{}, tc, &mockHook{})
 
 	worktreePath := filepath.Join(tmpDir, "github.com", "user", "myapp__worktrees", "feature")
 	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
@@ -821,5 +839,40 @@ func TestService_Env_configTemplate(t *testing.T) {
 	}
 	if result.Source != templatePath {
 		t.Errorf("expected source %q, got %q", templatePath, result.Source)
+	}
+}
+
+func TestNew_TriggersHooks(t *testing.T) {
+	dir := t.TempDir()
+	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
+	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	mock := &mockGit{}
+	hookMock := &mockHook{}
+	cfg := &config.Config{
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git"},
+		},
+	}
+	cfg.Defaults.ProjectsDir = dir
+	tc := tmux.NewClient(&mockTmuxRunner{})
+	svc := NewService(cfg, mock, tc, hookMock)
+
+	_, err := svc.New("myapp", "feature")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	hookNames := make([]string, len(hookMock.calls))
+	for i, c := range hookMock.calls {
+		hookNames[i] = c.name
+	}
+	if hookNames[0] != semconv.HookPreWorktree {
+		t.Errorf("first hook = %q, want %q", hookNames[0], semconv.HookPreWorktree)
+	}
+	if hookNames[1] != semconv.HookPostWorktree {
+		t.Errorf("second hook = %q, want %q", hookNames[1], semconv.HookPostWorktree)
 	}
 }

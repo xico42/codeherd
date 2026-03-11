@@ -112,7 +112,7 @@ var worktreeNewCmd = &cobra.Command{
 			fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
 
 			sesSvc := newSessionService()
-			err = sesSvc.Start(session.StartRequest{
+			sessionID, err := sesSvc.Start(session.StartRequest{
 				Project: project,
 				Branch:  branch,
 				Path:    result.Path,
@@ -126,7 +126,7 @@ var worktreeNewCmd = &cobra.Command{
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "done")
-			return execTmuxAttach(name)
+			return execTmuxAttach(sessionID)
 		}
 
 		return nil

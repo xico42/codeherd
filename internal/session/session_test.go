@@ -32,18 +32,19 @@ func newService(t *testing.T, r *mockRunner) *session.Service {
 
 func TestStart_OK(t *testing.T) {
 	r2 := &mockRunnerSequence{responses: []mockResponse{
-		{exitCode: 1}, // list-sessions → no sessions (exit 1 = empty)
-		{exitCode: 0}, // new-session → ok
-		{exitCode: 0}, // set-option status
-		{exitCode: 0}, // set-option started_at
-		{exitCode: 0}, // set-option canonical_name
-		{exitCode: 0}, // set-option session_type
+		{exitCode: 1},                 // list-sessions → no sessions (exit 1 = empty)
+		{exitCode: 0},                 // new-session → ok
+		{exitCode: 0},                 // set-option status
+		{exitCode: 0},                 // set-option started_at
+		{exitCode: 0},                 // set-option canonical_name
+		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
 	}}
 	tc := tmux.NewClient(r2)
 	svc := session.NewService(tc)
 
 	wtDir := t.TempDir()
-	err := svc.Start(session.StartRequest{
+	sessionID, err := svc.Start(session.StartRequest{
 		Project: "myapp",
 		Branch:  "feature",
 		Path:    wtDir,
@@ -53,21 +54,24 @@ func TestStart_OK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	if len(r2.calls) != 6 {
-		t.Errorf("expected 6 tmux calls, got %d: %v", len(r2.calls), r2.calls)
+	if sessionID != "$1" {
+		t.Errorf("Start() sessionID = %q, want $1", sessionID)
+	}
+	if len(r2.calls) != 7 {
+		t.Errorf("expected 7 tmux calls, got %d: %v", len(r2.calls), r2.calls)
 	}
 }
 
 func TestStart_DuplicateSession(t *testing.T) {
 	// list-sessions returns a record with the same canonical name
-	line := "myapp-feature\tmyapp-feature\tagent\trunning\t\t\n"
+	line := "$1\tmyapp-feature\tmyapp-feature\tagent\trunning\t\t\n"
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 0, stdout: line},
 	}}
 	tc := tmux.NewClient(r2)
 	svc := session.NewService(tc)
 
-	err := svc.Start(session.StartRequest{
+	_, err := svc.Start(session.StartRequest{
 		Project: "myapp",
 		Branch:  "feature",
 		Path:    t.TempDir(),
@@ -83,14 +87,14 @@ func TestStart_DuplicateSession(t *testing.T) {
 
 func TestStart_DuplicateSession_Prefixed(t *testing.T) {
 	// list-sessions returns a prefixed (waiting) session with the same canonical name
-	line := "⚡ myapp-feature\tmyapp-feature\tagent\twaiting\t\t\n"
+	line := "$1\t⚡ myapp-feature\tmyapp-feature\tagent\twaiting\t\t\n"
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 0, stdout: line},
 	}}
 	tc := tmux.NewClient(r2)
 	svc := session.NewService(tc)
 
-	err := svc.Start(session.StartRequest{
+	_, err := svc.Start(session.StartRequest{
 		Project: "myapp",
 		Branch:  "feature",
 		Path:    t.TempDir(),
@@ -106,7 +110,7 @@ func TestStart_MissingPath(t *testing.T) {
 	r := &mockRunner{exitCode: 1}
 	svc := newService(t, r)
 
-	err := svc.Start(session.StartRequest{
+	_, err := svc.Start(session.StartRequest{
 		Project: "myapp",
 		Branch:  "feature",
 		Path:    "/nonexistent/path",
@@ -119,7 +123,7 @@ func TestStart_MissingPath(t *testing.T) {
 
 func TestSetStatus_Running(t *testing.T) {
 	// SetStatus("running") with canonical name resolves the prefixed actual name.
-	line := "⚡ myapp-feature\tmyapp-feature\tagent\twaiting\t\t\n"
+	line := "$1\t⚡ myapp-feature\tmyapp-feature\tagent\twaiting\t\t\n"
 	r := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 0, stdout: line}, // list-sessions
 		{exitCode: 0},               // set-option status
@@ -147,7 +151,7 @@ func TestSetStatus_Running(t *testing.T) {
 
 func TestSetStatus_Waiting(t *testing.T) {
 	// SetStatus("waiting") with canonical name adds the prefix.
-	line := "myapp-feature\tmyapp-feature\tagent\trunning\t\t\n"
+	line := "$1\tmyapp-feature\tmyapp-feature\tagent\trunning\t\t\n"
 	r := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 0, stdout: line}, // list-sessions
 		{exitCode: 0},               // set-option status
@@ -257,9 +261,9 @@ func TestList_Empty(t *testing.T) {
 }
 
 func TestList_WithOptions(t *testing.T) {
-	lines := "⚡ myapp-feature\tmyapp-feature\tagent\twaiting\tProceed?\t\n" +
-		"api-main\tapi-main\tagent\t\t\t\n" +
-		"api-main~sh\tapi-main\tshell\t\t\t\n" // shell session — should be excluded
+	lines := "$1\t⚡ myapp-feature\tmyapp-feature\tagent\twaiting\tProceed?\t\n" +
+		"$2\tapi-main\tapi-main\tagent\t\t\t\n" +
+		"$3\tapi-main~sh\tapi-main\tshell\t\t\t\n" // shell session — should be excluded
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 0, stdout: lines},
 	}}
@@ -296,7 +300,7 @@ func TestList_WithOptions(t *testing.T) {
 }
 
 func TestShow_OK(t *testing.T) {
-	line := "myapp-feature\tmyapp-feature\tagent\trunning\t\t2024-01-01T00:00:00Z\n"
+	line := "$1\tmyapp-feature\tmyapp-feature\tagent\trunning\t\t2024-01-01T00:00:00Z\n"
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 0, stdout: line},
 	}}
@@ -313,6 +317,9 @@ func TestShow_OK(t *testing.T) {
 	if info.TmuxName != "myapp-feature" {
 		t.Errorf("TmuxName = %q, want myapp-feature", info.TmuxName)
 	}
+	if info.SessionID != "$1" {
+		t.Errorf("SessionID = %q, want $1", info.SessionID)
+	}
 	if info.Status != semconv.StatusRunning {
 		t.Errorf("Status = %q, want running", info.Status)
 	}
@@ -323,7 +330,7 @@ func TestShow_OK(t *testing.T) {
 
 func TestShow_WaitingSession(t *testing.T) {
 	// Session has prefix in tmux but canonical name is used for lookup.
-	line := "⚡ myapp-feature\tmyapp-feature\tagent\twaiting\tneed input\t\n"
+	line := "$2\t⚡ myapp-feature\tmyapp-feature\tagent\twaiting\tneed input\t\n"
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 0, stdout: line},
 	}}
@@ -340,6 +347,9 @@ func TestShow_WaitingSession(t *testing.T) {
 	if info.TmuxName != "⚡ myapp-feature" {
 		t.Errorf("TmuxName = %q, want ⚡ myapp-feature", info.TmuxName)
 	}
+	if info.SessionID != "$2" {
+		t.Errorf("SessionID = %q, want $2", info.SessionID)
+	}
 }
 
 func TestShow_NotFound(t *testing.T) {
@@ -353,7 +363,7 @@ func TestShow_NotFound(t *testing.T) {
 }
 
 func TestStop_OK(t *testing.T) {
-	line := "myapp-feature\tmyapp-feature\tagent\trunning\t\t\n"
+	line := "$1\tmyapp-feature\tmyapp-feature\tagent\trunning\t\t\n"
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 0, stdout: line}, // list-sessions
 		{exitCode: 0},               // kill-session
@@ -368,7 +378,7 @@ func TestStop_OK(t *testing.T) {
 
 func TestStop_WaitingSession(t *testing.T) {
 	// Stop must kill the prefixed session name.
-	line := "⚡ myapp-feature\tmyapp-feature\tagent\twaiting\t\t\n"
+	line := "$1\t⚡ myapp-feature\tmyapp-feature\tagent\twaiting\t\t\n"
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 0, stdout: line}, // list-sessions
 		{exitCode: 0},               // kill-session
@@ -400,7 +410,7 @@ func TestStart_RunnerError(t *testing.T) {
 	r := &mockRunner{exitCode: 1, err: errors.New("tmux exec failed")}
 	svc := newService(t, r)
 
-	err := svc.Start(session.StartRequest{
+	_, err := svc.Start(session.StartRequest{
 		Project: "myapp",
 		Branch:  "feature",
 		Path:    t.TempDir(),
@@ -434,7 +444,7 @@ func TestShow_RunnerError(t *testing.T) {
 }
 
 func TestStop_KillError(t *testing.T) {
-	line := "myapp-feature\tmyapp-feature\tagent\trunning\t\t\n"
+	line := "$1\tmyapp-feature\tmyapp-feature\tagent\trunning\t\t\n"
 	r := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 0, stdout: line},                   // list-sessions
 		{exitCode: 1, err: errors.New("kill failed")}, // kill-session
@@ -462,7 +472,7 @@ func TestStart_StatError(t *testing.T) {
 	r := &mockRunner{exitCode: 1}
 	svc := newService(t, r)
 
-	err := svc.Start(session.StartRequest{
+	_, err := svc.Start(session.StartRequest{
 		Project: "myapp",
 		Branch:  "feature",
 		Path:    "/tmp/\x00invalid",
@@ -473,5 +483,29 @@ func TestStart_StatError(t *testing.T) {
 	}
 	if errors.Is(err, session.ErrPathNotFound) {
 		t.Error("got ErrPathNotFound, expected a different error for invalid path")
+	}
+}
+
+func TestStart_SessionIDError(t *testing.T) {
+	r2 := &mockRunnerSequence{responses: []mockResponse{
+		{exitCode: 1}, // list-sessions → no sessions
+		{exitCode: 0}, // new-session → ok
+		{exitCode: 0}, // set-option status
+		{exitCode: 0}, // set-option started_at
+		{exitCode: 0}, // set-option canonical_name
+		{exitCode: 0}, // set-option session_type
+		{exitCode: 1}, // display-message → fails
+	}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc)
+
+	_, err := svc.Start(session.StartRequest{
+		Project: "myapp",
+		Branch:  "feature",
+		Path:    t.TempDir(),
+		Cmd:     "claude",
+	})
+	if err == nil {
+		t.Fatal("expected error when SessionID fails")
 	}
 }

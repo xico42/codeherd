@@ -25,9 +25,9 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 
 	switch sel.Group {
 	case groupAgent:
-		// Already has agent — just attach.
-		sessionName := semconv.SessionName(project, branch)
-		return m, func() tea.Msg { return attachMsg{session: sessionName} }
+		// Already has agent — attach using stable session ID (unaffected by renames).
+		sessionID := sel.AgentSessionID
+		return m, func() tea.Msg { return attachMsg{session: sessionID} }
 
 	case groupWorktree:
 		agents := cfg.AgentNames()
@@ -49,8 +49,7 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 			agent, _ := cfg.AgentByName(agents[0])
 			agentCmd := agent.Command()
 			return m, func() tea.Msg {
-				sessionName := semconv.SessionName(project, branch)
-				err := sesSvc.Start(session.StartRequest{
+				sessionID, err := sesSvc.Start(session.StartRequest{
 					Project: project,
 					Branch:  branch,
 					Path:    path,
@@ -60,7 +59,7 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 				if err != nil {
 					return errMsg{err: err}
 				}
-				return attachMsg{session: sessionName}
+				return attachMsg{session: sessionID}
 			}
 		}
 
@@ -92,8 +91,7 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 				if err != nil {
 					return errMsg{err: err}
 				}
-				sessionName := semconv.SessionName(project, defaultBranch)
-				err = sesSvc.Start(session.StartRequest{
+				sessionID, err := sesSvc.Start(session.StartRequest{
 					Project: project,
 					Branch:  defaultBranch,
 					Path:    result.Path,
@@ -103,7 +101,7 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 				if err != nil {
 					return errMsg{err: err}
 				}
-				return attachMsg{session: sessionName}
+				return attachMsg{session: sessionID}
 			}
 		}
 
@@ -157,6 +155,7 @@ func (m Model) shellAction() tea.Cmd {
 	project := sel.Project
 	branch := sel.Branch
 	path := sel.Path
+	shellSessionID := sel.ShellSessionID
 
 	return func() tea.Msg {
 		// For group 3 (project-only), clone + create worktree first.
@@ -177,21 +176,19 @@ func (m Model) shellAction() tea.Cmd {
 			path = result.Path
 		}
 
+		// If the shell session already exists, attach by stable session ID.
+		if shellSessionID != "" {
+			return attachMsg{session: shellSessionID}
+		}
+
 		shellName := semconv.ShellSessionName(project, branch)
 		sessionName := semconv.SessionName(project, branch)
 
-		// Create shell session if it doesn't exist.
-		exists, err := tmuxClient.HasSession(shellName)
-		if err != nil {
+		if err := tmuxClient.NewSession(shellName, path); err != nil {
 			return errMsg{err: err}
 		}
-		if !exists {
-			if err := tmuxClient.NewSession(shellName, path); err != nil {
-				return errMsg{err: err}
-			}
-			_ = tmuxClient.SetOption(shellName, semconv.TmuxOptionCanonicalName, sessionName)
-			_ = tmuxClient.SetOption(shellName, semconv.TmuxOptionSessionType, semconv.SessionTypeShell)
-		}
+		_ = tmuxClient.SetOption(shellName, semconv.TmuxOptionCanonicalName, sessionName)
+		_ = tmuxClient.SetOption(shellName, semconv.TmuxOptionSessionType, semconv.SessionTypeShell)
 
 		return attachMsg{session: shellName}
 	}
@@ -274,16 +271,16 @@ func (m Model) confirmDeleteAll() (tea.Model, tea.Cmd) {
 	tmuxClient := m.tmuxClient
 	project := target.Project
 	branch := target.Branch
+	canonicalName := semconv.SessionName(project, branch)
+	shellID := target.ShellSessionID
 
 	return m, func() tea.Msg {
-		agentName := semconv.SessionName(project, branch)
-		if running, _ := tmuxClient.HasSession(agentName); running {
-			_ = sesSvc.Stop(agentName)
+		if target.AgentSessionID != "" {
+			_ = sesSvc.Stop(canonicalName)
 		}
 
-		shellName := semconv.ShellSessionName(project, branch)
-		if running, _ := tmuxClient.HasSession(shellName); running {
-			_ = tmuxClient.KillSession(shellName)
+		if shellID != "" {
+			_ = tmuxClient.KillSession(shellID)
 		}
 
 		err := wtSvc.Delete(worktree.DeleteRequest{
@@ -304,14 +301,11 @@ func (m Model) confirmDeleteAgent() (tea.Model, tea.Cmd) {
 	m.screen = screenList
 
 	sesSvc := m.sesSvc
-	tmuxClient := m.tmuxClient
-	project := target.Project
-	branch := target.Branch
+	canonicalName := semconv.SessionName(target.Project, target.Branch)
 
 	return m, func() tea.Msg {
-		agentName := semconv.SessionName(project, branch)
-		if running, _ := tmuxClient.HasSession(agentName); running {
-			_ = sesSvc.Stop(agentName)
+		if target.AgentSessionID != "" {
+			_ = sesSvc.Stop(canonicalName)
 		}
 		return m.refreshCmd()()
 	}
@@ -323,13 +317,11 @@ func (m Model) confirmDeleteShell() (tea.Model, tea.Cmd) {
 	m.screen = screenList
 
 	tmuxClient := m.tmuxClient
-	project := target.Project
-	branch := target.Branch
+	shellID := target.ShellSessionID
 
 	return m, func() tea.Msg {
-		shellName := semconv.ShellSessionName(project, branch)
-		if running, _ := tmuxClient.HasSession(shellName); running {
-			_ = tmuxClient.KillSession(shellName)
+		if shellID != "" {
+			_ = tmuxClient.KillSession(shellID)
 		}
 		return m.refreshCmd()()
 	}
@@ -352,7 +344,7 @@ func (m Model) startSessionAfterCreate(msg worktreeCreatedMsg) tea.Cmd {
 			return errMsg{err: err}
 		}
 		agentCmd := agent.Command()
-		err = sesSvc.Start(session.StartRequest{
+		sessionID, err := sesSvc.Start(session.StartRequest{
 			Project: msg.project,
 			Branch:  msg.branch,
 			Path:    msg.path,
@@ -362,6 +354,6 @@ func (m Model) startSessionAfterCreate(msg worktreeCreatedMsg) tea.Cmd {
 		if err != nil {
 			return errMsg{err: err}
 		}
-		return attachMsg{session: semconv.SessionName(msg.project, msg.branch)}
+		return attachMsg{session: sessionID}
 	}
 }

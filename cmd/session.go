@@ -86,7 +86,7 @@ var sessionStartCmd = &cobra.Command{
 		fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
 
 		svc := newSessionService()
-		err = svc.Start(session.StartRequest{
+		sessionID, err := svc.Start(session.StartRequest{
 			Project: project,
 			Branch:  branch,
 			Path:    path,
@@ -105,7 +105,7 @@ var sessionStartCmd = &cobra.Command{
 		}
 
 		if sessionStartAttach {
-			return execTmuxAttach(name)
+			return execTmuxAttach(sessionID)
 		}
 		return nil
 	},
@@ -169,19 +169,26 @@ var sessionAttachCmd = &cobra.Command{
 		if err != nil {
 			return sessionErr(cmd, err)
 		}
-		return execTmuxAttach(info.TmuxName) // use actual tmux name for attach
+		return execTmuxAttach(info.SessionID) // use stable session_id for attach
 	},
 }
 
-// execTmuxAttach replaces the current process with tmux attach-session.
-func execTmuxAttach(name string) error {
+// execTmuxAttach attaches to a tmux session. If already inside tmux, uses
+// switch-client. Otherwise, replaces the process with tmux attach-session.
+var execTmuxAttach = func(name string) error {
+	if os.Getenv("TMUX") != "" {
+		tc := tmux.NewClient(tmux.NewRealRunner())
+		if err := tc.SwitchClient(name); err != nil {
+			return fmt.Errorf("switching client: %w", err)
+		}
+		return nil
+	}
 	tmuxBin, err := lookPath("tmux")
 	if err != nil {
 		return fmt.Errorf("tmux not found: %w", err)
 	}
-	err = syscall.Exec(tmuxBin, []string{"tmux", "attach-session", "-t", name}, os.Environ())
-	if err != nil {
-		return fmt.Errorf("attaching to session: %w", err)
+	if err := syscall.Exec(tmuxBin, []string{"tmux", "attach-session", "-t", name}, os.Environ()); err != nil {
+		return fmt.Errorf("exec tmux: %w", err)
 	}
 	return nil
 }

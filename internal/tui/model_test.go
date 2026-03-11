@@ -128,6 +128,64 @@ func TestModel_Update_attachMsg(t *testing.T) {
 	}
 }
 
+func TestModel_Update_attachMsg_insideTmux(t *testing.T) {
+	// When InsideTmux is true, attachMsg should call switchClientCmd instead of tea.Quit.
+	runner := &mockTmuxRunner{
+		responses: []mockTmuxResponse{
+			{stdout: "", exitCode: 0}, // switch-client
+		},
+	}
+	client := tmux.NewClient(runner)
+
+	m := Model{screen: screenList, InsideTmux: true, tmuxClient: client}
+	m.list = newList(nil)
+
+	updated, cmd := m.Update(attachMsg{session: "myapp-feat"})
+	um := updated.(Model)
+
+	// PendingAttach should NOT be set when inside tmux.
+	if um.PendingAttach != "" {
+		t.Errorf("PendingAttach = %q, want empty when InsideTmux", um.PendingAttach)
+	}
+
+	// Should return a non-nil cmd (switchClientCmd).
+	if cmd == nil {
+		t.Error("attachMsg with InsideTmux should return a non-nil Cmd")
+	}
+
+	// Execute the cmd and verify it calls switch-client.
+	msg := cmd()
+	if msg != nil {
+		t.Errorf("switchClientCmd should return nil on success, got %T", msg)
+	}
+	if runner.idx != 1 {
+		t.Errorf("expected 1 runner call, got %d", runner.idx)
+	}
+}
+
+func TestModel_switchClientCmd_error(t *testing.T) {
+	runner := &mockTmuxRunner{
+		responses: []mockTmuxResponse{
+			{stdout: "", exitCode: 1}, // switch-client fails
+		},
+	}
+	client := tmux.NewClient(runner)
+
+	m := Model{tmuxClient: client}
+	cmd := m.switchClientCmd("some-session")
+	if cmd == nil {
+		t.Fatal("switchClientCmd should return non-nil Cmd")
+	}
+
+	msg := cmd()
+	if msg == nil {
+		t.Fatal("switchClientCmd should return errMsg on failure")
+	}
+	if _, ok := msg.(errMsg); !ok {
+		t.Errorf("switchClientCmd returned %T, want errMsg", msg)
+	}
+}
+
 func TestModel_Update_cloneDoneMsg(t *testing.T) {
 	m := Model{screen: screenList}
 	m.list = newList(nil)
@@ -346,7 +404,7 @@ func TestModel_Init(t *testing.T) {
 }
 
 func TestNewModel(t *testing.T) {
-	m := NewModel(nil, nil, nil, nil, nil)
+	m := NewModel(nil, nil, nil, nil, nil, false)
 	if m.screen != screenList {
 		t.Errorf("screen = %d, want %d", m.screen, screenList)
 	}

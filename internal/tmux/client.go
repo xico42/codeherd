@@ -8,6 +8,7 @@ import (
 
 // SessionRecord holds the structured data returned by ListSessions.
 type SessionRecord struct {
+	ID            string // tmux session_id (e.g. "$1") — stable, never changes
 	Name          string // current tmux session name (may have status prefix)
 	CanonicalName string // @codeherd_canonical_name — original name, never changes
 	SessionType   string // @codeherd_session_type — "agent" or "shell"
@@ -51,6 +52,22 @@ func (c *Client) KillSession(name string) error {
 // NewSession creates a detached tmux session with the given name and start directory.
 func (c *Client) NewSession(name, dir string) error {
 	_, stderr, code, err := c.runner.Run("new-session", "-d", "-s", name, "-c", dir)
+	if err != nil {
+		return fmt.Errorf("tmux new-session: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("tmux new-session: %s", strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
+// NewSessionWithCmd creates a detached tmux session with an initial command.
+func (c *Client) NewSessionWithCmd(name, dir, cmd string) error {
+	args := []string{"new-session", "-d", "-s", name, "-c", dir}
+	if cmd != "" {
+		args = append(args, cmd)
+	}
+	_, stderr, code, err := c.runner.Run(args...)
 	if err != nil {
 		return fmt.Errorf("tmux new-session: %w", err)
 	}
@@ -121,10 +138,60 @@ func (c *Client) RenameSession(oldName, newName string) error {
 	return nil
 }
 
+// SwitchClient switches the current tmux client to the named session.
+func (c *Client) SwitchClient(name string) error {
+	_, stderr, code, err := c.runner.Run("switch-client", "-t", name)
+	if err != nil {
+		return fmt.Errorf("tmux switch-client: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("tmux switch-client: %s", strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
+// SelectWindow selects a window in the current session.
+func (c *Client) SelectWindow(target string) error {
+	_, stderr, code, err := c.runner.Run("select-window", "-t", target)
+	if err != nil {
+		return fmt.Errorf("tmux select-window: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("tmux select-window: %s", strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
+// SessionID returns the stable tmux session_id (e.g. "$1") for a given target.
+// The target can be a session name, ID, or any tmux target accepted by -t.
+func (c *Client) SessionID(target string) (string, error) {
+	stdout, _, code, err := c.runner.Run("display-message", "-t", target, "-p", "#{session_id}")
+	if err != nil {
+		return "", fmt.Errorf("tmux display-message: %w", err)
+	}
+	if code != 0 {
+		return "", fmt.Errorf("tmux session not found: %s", target)
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
+// CurrentSession returns the name of the tmux session the current client is
+// attached to. Returns empty string (no error) if not inside tmux.
+func (c *Client) CurrentSession() (string, error) {
+	stdout, _, code, err := c.runner.Run("display-message", "-p", "#{session_name}")
+	if err != nil {
+		return "", fmt.Errorf("tmux display-message: %w", err)
+	}
+	if code != 0 {
+		return "", nil // not in tmux
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
 // ListSessions returns a SessionRecord for every active tmux session.
 // Returns nil (no error) when no sessions exist (tmux exits 1 in that case).
 func (c *Client) ListSessions() ([]SessionRecord, error) {
-	format := "#{session_name}\t#{@codeherd_canonical_name}\t#{@codeherd_session_type}\t#{@codeherd_status}\t#{@codeherd_annotation}\t#{@codeherd_started_at}"
+	format := "#{session_id}\t#{session_name}\t#{@codeherd_canonical_name}\t#{@codeherd_session_type}\t#{@codeherd_status}\t#{@codeherd_annotation}\t#{@codeherd_started_at}"
 	stdout, stderr, code, err := c.runner.Run("list-sessions", "-F", format)
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-sessions: %w", err)
@@ -140,17 +207,18 @@ func (c *Client) ListSessions() ([]SessionRecord, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "\t", 6)
-		for len(fields) < 6 {
+		fields := strings.SplitN(line, "\t", 7)
+		for len(fields) < 7 {
 			fields = append(fields, "")
 		}
 		records = append(records, SessionRecord{
-			Name:          fields[0],
-			CanonicalName: fields[1],
-			SessionType:   fields[2],
-			Status:        fields[3],
-			Annotation:    fields[4],
-			StartedAt:     fields[5],
+			ID:            fields[0],
+			Name:          fields[1],
+			CanonicalName: fields[2],
+			SessionType:   fields[3],
+			Status:        fields[4],
+			Annotation:    fields[5],
+			StartedAt:     fields[6],
 		})
 	}
 	return records, nil

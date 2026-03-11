@@ -31,7 +31,7 @@ func TestBuildItems_groupOrdering(t *testing.T) {
 		agentSessions: map[string]agentInfo{
 			"myapp-feature": {status: semconv.StatusRunning},
 		},
-		shellSessions: map[string]bool{},
+		shellSessions: map[string]string{},
 		projects: []projEntry{
 			{name: "api", cloned: true},
 			{name: "frontend", cloned: true},
@@ -77,7 +77,7 @@ func TestBuildItems_agentStatus(t *testing.T) {
 		agentSessions: map[string]agentInfo{
 			"myapp-feat": {status: semconv.StatusWaiting, annotation: "Allow?"},
 		},
-		shellSessions: map[string]bool{},
+		shellSessions: map[string]string{},
 		projects:      []projEntry{{name: "myapp", cloned: true}},
 	}
 
@@ -98,7 +98,7 @@ func TestBuildItems_shellSession(t *testing.T) {
 			{project: "api", branch: "dev", path: "/p/wt/dev"},
 		},
 		agentSessions: map[string]agentInfo{},
-		shellSessions: map[string]bool{"api-dev": true},
+		shellSessions: map[string]string{"api-dev": "$1"},
 		projects:      []projEntry{{name: "api", cloned: true}},
 	}
 
@@ -114,7 +114,7 @@ func TestBuildItems_cloneStatus(t *testing.T) {
 	data := refreshResult{
 		worktrees:     []wtEntry{},
 		agentSessions: map[string]agentInfo{},
-		shellSessions: map[string]bool{},
+		shellSessions: map[string]string{},
 		projects: []projEntry{
 			{name: "cloned-proj", cloned: true},
 			{name: "uncloned-proj", cloned: false},
@@ -144,7 +144,7 @@ func TestBuildItems_isMain(t *testing.T) {
 			{project: "myapp", branch: "feature", path: "/projects/github.com/user/myapp/worktrees/feature"},
 		},
 		agentSessions: map[string]agentInfo{},
-		shellSessions: map[string]bool{},
+		shellSessions: map[string]string{},
 		projects:      []projEntry{{name: "myapp", cloned: true}},
 		cloneDirs:     map[string]string{"myapp": "/projects/github.com/user/myapp"},
 	}
@@ -182,7 +182,7 @@ func TestBuildItems_isMain_noCfg(t *testing.T) {
 			{project: "myapp", branch: "main", path: "/projects/github.com/user/myapp"},
 		},
 		agentSessions: map[string]agentInfo{},
-		shellSessions: map[string]bool{},
+		shellSessions: map[string]string{},
 		projects:      []projEntry{{name: "myapp", cloned: true}},
 		cloneDirs:     nil, // nil: produced when cfg == nil
 	}
@@ -204,7 +204,7 @@ func TestBuildItems_waitingSortsBeforeRunning(t *testing.T) {
 			"myapp-running-branch": {status: semconv.StatusRunning},
 			"myapp-waiting-branch": {status: semconv.StatusWaiting},
 		},
-		shellSessions: map[string]bool{},
+		shellSessions: map[string]string{},
 		projects:      []projEntry{{name: "myapp", cloned: true}},
 	}
 
@@ -232,7 +232,7 @@ func TestBuildItems_alphabeticalWithinGroup(t *testing.T) {
 			{project: "alpha", branch: "beta", path: "/p/wt/3"},
 		},
 		agentSessions: map[string]agentInfo{},
-		shellSessions: map[string]bool{},
+		shellSessions: map[string]string{},
 		projects: []projEntry{
 			{name: "alpha", cloned: true},
 			{name: "zoo", cloned: true},

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/semconv"
+	"github.com/xico42/codeherd/internal/tmux"
 )
 
 func TestStartDelete_noSelection(t *testing.T) {
@@ -339,7 +341,7 @@ func TestAttachAction_nilSelection(t *testing.T) {
 }
 
 func TestAttachAction_agentGroup(t *testing.T) {
-	items := []Item{{Project: "myapp", Branch: "feat", Group: groupAgent}}
+	items := []Item{{Project: "myapp", Branch: "feat", Group: groupAgent, AgentSessionID: "$5"}}
 	listItems := make([]list.Item, len(items))
 	for i, it := range items {
 		listItems[i] = it
@@ -356,9 +358,8 @@ func TestAttachAction_agentGroup(t *testing.T) {
 	if !ok {
 		t.Fatalf("cmd() returned %T, want attachMsg", msg)
 	}
-	want := semconv.SessionName("myapp", "feat")
-	if am.session != want {
-		t.Errorf("session = %q, want %q", am.session, want)
+	if am.session != "$5" {
+		t.Errorf("session = %q, want %q", am.session, "$5")
 	}
 }
 
@@ -837,5 +838,184 @@ func TestUpdateAgentPicker_View(t *testing.T) {
 	v := m.View()
 	if !strings.Contains(v.Content, "Select Agent") {
 		t.Errorf("View() on screenAgentPicker should show agent picker: %q", v.Content)
+	}
+}
+
+// ── shellAction with selection tests ──────────────────────────────────────────
+
+func TestShellAction_worktreeItem_sessionExists(t *testing.T) {
+	runner := &mockTmuxRunner{
+		responses: []mockTmuxResponse{
+			{stdout: "", exitCode: 0}, // has-session (exists)
+		},
+	}
+	client := tmux.NewClient(runner)
+
+	items := []Item{{Project: "myapp", Branch: "feat", Path: "/tmp/wt", Group: groupWorktree}}
+	listItems := make([]list.Item, len(items))
+	for i, it := range items {
+		listItems[i] = it
+	}
+	m := Model{screen: screenList, tmuxClient: client}
+	m.list = newList(listItems)
+
+	cmd := m.shellAction()
+	if cmd == nil {
+		t.Fatal("shellAction on worktree item should return non-nil cmd")
+	}
+	msg := cmd()
+	am, ok := msg.(attachMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want attachMsg", msg)
+	}
+	want := semconv.ShellSessionName("myapp", "feat")
+	if am.session != want {
+		t.Errorf("session = %q, want %q", am.session, want)
+	}
+}
+
+func TestShellAction_worktreeItem_sessionCreated(t *testing.T) {
+	runner := &mockTmuxRunner{
+		responses: []mockTmuxResponse{
+			{stdout: "", exitCode: 0}, // new-session
+			{stdout: "", exitCode: 0}, // set-option (canonical name)
+			{stdout: "", exitCode: 0}, // set-option (session type)
+		},
+	}
+	client := tmux.NewClient(runner)
+
+	items := []Item{{Project: "myapp", Branch: "feat", Path: "/tmp/wt", Group: groupWorktree}}
+	listItems := make([]list.Item, len(items))
+	for i, it := range items {
+		listItems[i] = it
+	}
+	m := Model{screen: screenList, tmuxClient: client}
+	m.list = newList(listItems)
+
+	cmd := m.shellAction()
+	if cmd == nil {
+		t.Fatal("shellAction should return non-nil cmd")
+	}
+	msg := cmd()
+	am, ok := msg.(attachMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want attachMsg", msg)
+	}
+	want := semconv.ShellSessionName("myapp", "feat")
+	if am.session != want {
+		t.Errorf("session = %q, want %q", am.session, want)
+	}
+}
+
+func TestShellAction_newSessionExecError(t *testing.T) {
+	// NewSession runner error (exec failure).
+	errRunner := &errOnCallRunner{errOnCall: 0}
+	client := tmux.NewClient(errRunner)
+
+	items := []Item{{Project: "myapp", Branch: "feat", Path: "/tmp/wt", Group: groupWorktree}}
+	listItems := make([]list.Item, len(items))
+	for i, it := range items {
+		listItems[i] = it
+	}
+	m := Model{screen: screenList, tmuxClient: client}
+	m.list = newList(listItems)
+
+	cmd := m.shellAction()
+	if cmd == nil {
+		t.Fatal("shellAction should return non-nil cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(errMsg); !ok {
+		t.Errorf("cmd() returned %T, want errMsg on NewSession error", msg)
+	}
+}
+
+func TestShellAction_newSessionError(t *testing.T) {
+	runner := &mockTmuxRunner{
+		responses: []mockTmuxResponse{
+			{stdout: "", exitCode: 1}, // new-session (fails)
+		},
+	}
+	client := tmux.NewClient(runner)
+
+	items := []Item{{Project: "myapp", Branch: "feat", Path: "/tmp/wt", Group: groupWorktree}}
+	listItems := make([]list.Item, len(items))
+	for i, it := range items {
+		listItems[i] = it
+	}
+	m := Model{screen: screenList, tmuxClient: client}
+	m.list = newList(listItems)
+
+	cmd := m.shellAction()
+	if cmd == nil {
+		t.Fatal("shellAction should return non-nil cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(errMsg); !ok {
+		t.Errorf("cmd() returned %T, want errMsg on NewSession error", msg)
+	}
+}
+
+// errOnCallRunner returns an error on a specific call index.
+type errOnCallRunner struct {
+	callIdx   int
+	errOnCall int
+}
+
+func (r *errOnCallRunner) Run(args ...string) (string, string, int, error) {
+	idx := r.callIdx
+	r.callIdx++
+	if idx == r.errOnCall {
+		return "", "", 0, fmt.Errorf("forced error")
+	}
+	return "", "", 0, nil
+}
+
+// ── startSessionAfterCreate tests ─────────────────────────────────────────────
+
+func TestStartSessionAfterCreate_agentNotFound(t *testing.T) {
+	cfg := &config.Config{} // no agents
+	m := Model{cfg: cfg}
+
+	cmd := m.startSessionAfterCreate(worktreeCreatedMsg{
+		project: "myapp",
+		branch:  "feat",
+		path:    "/tmp/wt",
+		agent:   "nonexistent",
+	})
+	if cmd == nil {
+		t.Fatal("startSessionAfterCreate should return non-nil cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(errMsg); !ok {
+		t.Errorf("cmd() returned %T, want errMsg for missing agent", msg)
+	}
+}
+
+// ── worktreeCreatedMsg with attach tests ──────────────────────────────────────
+
+func TestModel_Update_worktreeCreatedMsg_withAttachAndAgent(t *testing.T) {
+	cfg := &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"claude": {Cmd: "claude"},
+		},
+	}
+	m := Model{screen: screenForm, cfg: cfg}
+	m.list = newList(nil)
+	m.form = newFormModel(formContext{project: "myapp", baseBranch: "main"}, cfg, nil, nil)
+
+	updated, cmd := m.Update(worktreeCreatedMsg{
+		project: "myapp",
+		branch:  "feat",
+		path:    "/tmp/wt",
+		attach:  true,
+		agent:   "claude",
+	})
+	um := updated.(Model)
+	if um.screen != screenList {
+		t.Errorf("screen = %d, want %d", um.screen, screenList)
+	}
+	if cmd == nil {
+		t.Error("worktreeCreatedMsg with attach+agent should return non-nil cmd")
 	}
 }

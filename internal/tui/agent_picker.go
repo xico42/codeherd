@@ -9,7 +9,6 @@ import (
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/project"
-	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/session"
 	"github.com/xico42/codeherd/internal/worktree"
 )
@@ -103,7 +102,7 @@ func (p *agentPickerModel) submit() tea.Cmd {
 			}
 		}
 
-		err := pending.sesSvc.Start(session.StartRequest{
+		sessionID, err := pending.sesSvc.Start(session.StartRequest{
 			Project: pending.project,
 			Branch:  pending.branch,
 			Path:    path,
@@ -113,7 +112,7 @@ func (p *agentPickerModel) submit() tea.Cmd {
 		if err != nil {
 			return errMsg{err: err}
 		}
-		return attachMsg{session: semconv.SessionName(pending.project, pending.branch)}
+		return attachMsg{session: sessionID}
 	}
 }
 

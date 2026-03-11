@@ -21,6 +21,8 @@ const (
 	SessionTypeShell = "shell"
 
 	StatusPrefix = "⚡ "
+
+	CodeherdSessionName = "codeherd"
 )
 
 func FlattenBranch(branch string) string {

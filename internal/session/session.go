@@ -57,25 +57,25 @@ type StartRequest struct {
 // @codeherd_started_at tmux options on the new session.
 // Returns ErrSessionExists if a session with the derived name already exists.
 // Returns ErrPathNotFound if Path does not exist on disk.
-func (s *Service) Start(req StartRequest) error {
+func (s *Service) Start(req StartRequest) (string, error) {
 	name := semconv.SessionName(req.Project, req.Branch)
 
 	// Check for existing session by canonical name (handles prefixed names too).
 	records, err := s.tmux.ListSessions()
 	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
+		return "", fmt.Errorf("checking session: %w", err)
 	}
 	for _, r := range records {
 		if r.CanonicalName == name {
-			return &SessionExistsError{Name: name}
+			return "", &SessionExistsError{Name: name}
 		}
 	}
 
 	if _, err := os.Stat(req.Path); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("%w: %s", ErrPathNotFound, req.Path)
+			return "", fmt.Errorf("%w: %s", ErrPathNotFound, req.Path)
 		}
-		return fmt.Errorf("checking path: %w", err)
+		return "", fmt.Errorf("checking path: %w", err)
 	}
 
 	env := make(map[string]string)
@@ -85,7 +85,7 @@ func (s *Service) Start(req StartRequest) error {
 	env[semconv.SessionEnvVar] = name
 
 	if err := s.tmux.NewSessionWithEnv(name, req.Path, env, req.Cmd); err != nil {
-		return fmt.Errorf("creating tmux session: %w", err)
+		return "", fmt.Errorf("creating tmux session: %w", err)
 	}
 
 	now := time.Now().UTC()
@@ -94,13 +94,19 @@ func (s *Service) Start(req StartRequest) error {
 	_ = s.tmux.SetOption(name, semconv.TmuxOptionCanonicalName, name)
 	_ = s.tmux.SetOption(name, semconv.TmuxOptionSessionType, semconv.SessionTypeAgent)
 
-	return nil
+	// Get the stable session ID (unaffected by renames).
+	id, err := s.tmux.SessionID(name)
+	if err != nil {
+		return "", fmt.Errorf("getting session id: %w", err)
+	}
+	return id, nil
 }
 
 // SessionInfo holds display information about a tmux session.
 type SessionInfo struct {
 	Name       string
 	TmuxName   string // actual tmux session name (may have status prefix)
+	SessionID  string // tmux session_id — stable target for attach/switch
 	Project    string
 	Branch     string
 	Status     string
@@ -146,6 +152,7 @@ func (s *Service) Show(name string) (*SessionInfo, error) {
 			info := &SessionInfo{
 				Name:       r.CanonicalName,
 				TmuxName:   r.Name,
+				SessionID:  r.ID,
 				Status:     r.Status,
 				Annotation: r.Annotation,
 			}

@@ -17,16 +17,18 @@ const (
 
 // Item represents a single entry in the TUI list.
 type Item struct {
-	Project     string
-	Branch      string
-	Path        string
-	Group       int
-	HasAgent    bool
-	AgentStatus string // "running", "waiting", ""
-	Annotation  string
-	HasShell    bool
-	Cloned      bool
-	IsMain      bool // true for the main worktree (clone dir)
+	Project        string
+	Branch         string
+	Path           string
+	Group          int
+	HasAgent       bool
+	AgentStatus    string // "running", "waiting", ""
+	AgentSessionID string // tmux session_id — stable identifier for attach
+	Annotation     string
+	HasShell       bool
+	ShellSessionID string // tmux session_id — stable identifier for attach
+	Cloned         bool
+	IsMain         bool // true for the main worktree (clone dir)
 }
 
 func (i Item) FilterValue() string {
@@ -40,7 +42,7 @@ func (i Item) FilterValue() string {
 type refreshResult struct {
 	worktrees     []wtEntry
 	agentSessions map[string]agentInfo // keyed by session name (project-branch)
-	shellSessions map[string]bool      // keyed by canonical session name (project-branch)
+	shellSessions map[string]string    // canonical session name → tmux session_id
 	projects      []projEntry
 	cloneDirs     map[string]string // project name -> clone dir path
 }
@@ -52,6 +54,7 @@ type wtEntry struct {
 }
 
 type agentInfo struct {
+	sessionID  string // tmux session_id — stable identifier for attach
 	status     string
 	annotation string
 }
@@ -72,18 +75,21 @@ func buildItems(data refreshResult) []list.Item {
 
 		sessionName := semconv.SessionName(wt.project, wt.branch)
 
+		shellID := data.shellSessions[sessionName]
 		item := Item{
-			Project:  wt.project,
-			Branch:   wt.branch,
-			Path:     wt.path,
-			HasShell: data.shellSessions[sessionName],
-			IsMain:   data.cloneDirs[wt.project] == wt.path,
+			Project:        wt.project,
+			Branch:         wt.branch,
+			Path:           wt.path,
+			HasShell:       shellID != "",
+			ShellSessionID: shellID,
+			IsMain:         data.cloneDirs[wt.project] == wt.path,
 		}
 
 		if agent, ok := data.agentSessions[sessionName]; ok {
 			item.Group = groupAgent
 			item.HasAgent = true
 			item.AgentStatus = agent.status
+			item.AgentSessionID = agent.sessionID
 			item.Annotation = agent.annotation
 		} else {
 			item.Group = groupWorktree

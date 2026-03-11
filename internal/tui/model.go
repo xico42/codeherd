@@ -62,6 +62,9 @@ type Model struct {
 	// Set before quitting to trigger tmux attach.
 	PendingAttach string
 
+	// When true, attach uses switch-client instead of quitting.
+	InsideTmux bool
+
 	// Delete confirmation state.
 	confirm *confirmModel
 
@@ -82,6 +85,7 @@ func NewModel(
 	sesSvc *session.Service,
 	projSvc *project.Service,
 	tmuxClient *tmux.Client,
+	insideTmux bool,
 ) Model {
 	keys := defaultKeyMap()
 	l := newList(nil)
@@ -97,6 +101,7 @@ func NewModel(
 		sesSvc:     sesSvc,
 		projSvc:    projSvc,
 		tmuxClient: tmuxClient,
+		InsideTmux: insideTmux,
 	}
 }
 
@@ -161,6 +166,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case attachMsg:
+		if m.InsideTmux {
+			return m, m.switchClientCmd(msg.session)
+		}
 		m.PendingAttach = msg.session
 		return m, tea.Quit
 
@@ -297,7 +305,7 @@ func (m Model) refreshCmd() tea.Cmd {
 	return func() tea.Msg {
 		data := refreshResult{
 			agentSessions: make(map[string]agentInfo),
-			shellSessions: make(map[string]bool),
+			shellSessions: make(map[string]string),
 		}
 
 		// 1. Worktrees
@@ -321,9 +329,10 @@ func (m Model) refreshCmd() tea.Cmd {
 				for _, r := range records {
 					switch r.SessionType {
 					case semconv.SessionTypeShell:
-						data.shellSessions[r.CanonicalName] = true
+						data.shellSessions[r.CanonicalName] = r.ID
 					case semconv.SessionTypeAgent:
 						data.agentSessions[r.CanonicalName] = agentInfo{
+							sessionID:  r.ID,
 							status:     r.Status,
 							annotation: r.Annotation,
 						}
@@ -363,6 +372,17 @@ func (m Model) refreshCmd() tea.Cmd {
 			result[i] = li.(Item)
 		}
 		return itemsMsg(result)
+	}
+}
+
+// switchClientCmd switches the tmux client to the given session.
+func (m Model) switchClientCmd(session string) tea.Cmd {
+	tmuxClient := m.tmuxClient
+	return func() tea.Msg {
+		if err := tmuxClient.SwitchClient(session); err != nil {
+			return errMsg{err: err}
+		}
+		return nil
 	}
 }
 

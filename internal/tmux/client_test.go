@@ -79,7 +79,7 @@ func TestClient_KillSession_error(t *testing.T) {
 }
 
 func TestClient_ListSessions_ok(t *testing.T) {
-	line := "myapp-feat\tmyapp-feat\tagent\trunning\tdoing stuff\t2026-01-01T00:00:00Z"
+	line := "$1\tmyapp-feat\tmyapp-feat\tagent\trunning\tdoing stuff\t2026-01-01T00:00:00Z"
 	r := &mockRunner{exitCode: 0, stdout: line + "\n"}
 	c := tmux.NewClient(r)
 	records, err := c.ListSessions()
@@ -90,6 +90,9 @@ func TestClient_ListSessions_ok(t *testing.T) {
 		t.Fatalf("len = %d, want 1", len(records))
 	}
 	rec := records[0]
+	if rec.ID != "$1" {
+		t.Errorf("ID = %q, want $1", rec.ID)
+	}
 	if rec.Name != "myapp-feat" {
 		t.Errorf("Name = %q, want myapp-feat", rec.Name)
 	}
@@ -111,8 +114,8 @@ func TestClient_ListSessions_ok(t *testing.T) {
 }
 
 func TestClient_ListSessions_prefixedAndShell(t *testing.T) {
-	lines := "⚡ myapp-feat\tmyapp-feat\tagent\twaiting\tneed input\t\n" +
-		"myapp-feat~sh\tmyapp-feat\tshell\t\t\t\n"
+	lines := "$2\t⚡ myapp-feat\tmyapp-feat\tagent\twaiting\tneed input\t\n" +
+		"$3\tmyapp-feat~sh\tmyapp-feat\tshell\t\t\t\n"
 	r := &mockRunner{exitCode: 0, stdout: lines}
 	c := tmux.NewClient(r)
 	records, err := c.ListSessions()
@@ -135,7 +138,7 @@ func TestClient_ListSessions_prefixedAndShell(t *testing.T) {
 
 func TestClient_ListSessions_nonCodeherd(t *testing.T) {
 	// Non-codeherd sessions have empty option fields.
-	r := &mockRunner{exitCode: 0, stdout: "other-session\t\t\t\t\t\n"}
+	r := &mockRunner{exitCode: 0, stdout: "$4\tother-session\t\t\t\t\t\n"}
 	c := tmux.NewClient(r)
 	records, err := c.ListSessions()
 	if err != nil {
@@ -194,11 +197,11 @@ func TestClient_KillSession_execError(t *testing.T) {
 }
 
 func TestClient_ListSessions_format(t *testing.T) {
-	r := &mockRunner{exitCode: 0, stdout: "s\t\t\t\t\t\n"}
+	r := &mockRunner{exitCode: 0, stdout: "$0\ts\t\t\t\t\t\n"}
 	c := tmux.NewClient(r)
 	_, _ = c.ListSessions()
 	argStr := fmt.Sprintf("%v", r.lastArgs)
-	for _, want := range []string{"#{session_name}", "#{@codeherd_canonical_name}", "#{@codeherd_session_type}"} {
+	for _, want := range []string{"#{session_id}", "#{session_name}", "#{@codeherd_canonical_name}", "#{@codeherd_session_type}"} {
 		if !strings.Contains(argStr, want) {
 			t.Errorf("expected %q in args %s", want, argStr)
 		}
@@ -414,6 +417,19 @@ func TestSetOption_runnerError(t *testing.T) {
 	}
 }
 
+func TestNewSessionWithCmd(t *testing.T) {
+	r := &mockRunner{exitCode: 0}
+	c := tmux.NewClient(r)
+	err := c.NewSessionWithCmd("codeherd", "/tmp", "ch --no-tmux")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"new-session", "-d", "-s", "codeherd", "-c", "/tmp", "ch --no-tmux"}
+	if !slices.Equal(r.lastArgs, want) {
+		t.Errorf("args = %v, want %v", r.lastArgs, want)
+	}
+}
+
 func TestRenameSession(t *testing.T) {
 	r := &mockRunner{}
 	c := tmux.NewClient(r)
@@ -445,5 +461,109 @@ func TestRenameSession_runnerError(t *testing.T) {
 	err := c.RenameSession("old", "new")
 	if err == nil {
 		t.Fatal("expected error when runner fails")
+	}
+}
+
+func TestSwitchClient(t *testing.T) {
+	r := &mockRunner{stdout: "", stderr: "", exitCode: 0}
+	c := tmux.NewClient(r)
+	err := c.SwitchClient("my-session")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"switch-client", "-t", "my-session"}
+	if !slices.Equal(r.lastArgs, want) {
+		t.Errorf("args = %v, want %v", r.lastArgs, want)
+	}
+}
+
+func TestSwitchClientError(t *testing.T) {
+	r := &mockRunner{stdout: "", stderr: "no current client", exitCode: 1}
+	c := tmux.NewClient(r)
+	err := c.SwitchClient("my-session")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "no current client") {
+		t.Errorf("error = %q, want it to contain 'no current client'", err)
+	}
+}
+
+func TestCurrentSession(t *testing.T) {
+	r := &mockRunner{
+		stdout: "my-session\n", exitCode: 0,
+	}
+	c := tmux.NewClient(r)
+	name, err := c.CurrentSession()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "my-session" {
+		t.Errorf("name = %q, want %q", name, "my-session")
+	}
+	want := []string{"display-message", "-p", "#{session_name}"}
+	if !slices.Equal(r.lastArgs, want) {
+		t.Errorf("args = %v, want %v", r.lastArgs, want)
+	}
+}
+
+func TestCurrentSessionNotInTmux(t *testing.T) {
+	r := &mockRunner{
+		stderr: "no current client", exitCode: 1,
+	}
+	c := tmux.NewClient(r)
+	name, err := c.CurrentSession()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "" {
+		t.Errorf("name = %q, want empty", name)
+	}
+}
+
+func TestSessionID_ok(t *testing.T) {
+	r := &mockRunner{stdout: "$3\n", exitCode: 0}
+	c := tmux.NewClient(r)
+	id, err := c.SessionID("myapp-feat")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "$3" {
+		t.Errorf("SessionID = %q, want $3", id)
+	}
+	want := []string{"display-message", "-t", "myapp-feat", "-p", "#{session_id}"}
+	if !slices.Equal(r.lastArgs, want) {
+		t.Errorf("args = %v, want %v", r.lastArgs, want)
+	}
+}
+
+func TestSessionID_notFound(t *testing.T) {
+	r := &mockRunner{exitCode: 1}
+	c := tmux.NewClient(r)
+	_, err := c.SessionID("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent session")
+	}
+}
+
+func TestSessionID_runnerError(t *testing.T) {
+	r := &mockRunner{err: errors.New("boom")}
+	c := tmux.NewClient(r)
+	_, err := c.SessionID("myapp-feat")
+	if err == nil {
+		t.Fatal("expected error when runner fails")
+	}
+}
+
+func TestSelectWindow(t *testing.T) {
+	r := &mockRunner{stdout: "", stderr: "", exitCode: 0}
+	c := tmux.NewClient(r)
+	err := c.SelectWindow("codeherd:0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"select-window", "-t", "codeherd:0"}
+	if !slices.Equal(r.lastArgs, want) {
+		t.Errorf("args = %v, want %v", r.lastArgs, want)
 	}
 }

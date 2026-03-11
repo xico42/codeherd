@@ -114,6 +114,11 @@ func newList(items []list.Item) list.Model {
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	// Disable the list's built-in quit keybindings (esc, q, ctrl+c).
+	// The TUI handles quitting via its own keyMap.Quit binding.
+	// Without this, pressing ESC triggers the list's quit and exits the
+	// Bubble Tea program, leaving a dead pane in the codeherd tmux session.
+	l.DisableQuitKeybindings()
 	return l
 }
 

@@ -555,6 +555,98 @@ func TestSessionID_runnerError(t *testing.T) {
 	}
 }
 
+func TestIsPaneDead_dead(t *testing.T) {
+	r := &mockRunner{stdout: "1\n", exitCode: 0}
+	c := tmux.NewClient(r)
+	dead, err := c.IsPaneDead("codeherd")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !dead {
+		t.Error("expected dead=true")
+	}
+	if r.lastArgs[0] != "list-panes" {
+		t.Errorf("expected list-panes, got %v", r.lastArgs)
+	}
+}
+
+func TestIsPaneDead_alive(t *testing.T) {
+	r := &mockRunner{stdout: "0\n", exitCode: 0}
+	c := tmux.NewClient(r)
+	dead, err := c.IsPaneDead("codeherd")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dead {
+		t.Error("expected dead=false")
+	}
+}
+
+func TestIsPaneDead_noSession(t *testing.T) {
+	r := &mockRunner{exitCode: 1}
+	c := tmux.NewClient(r)
+	dead, err := c.IsPaneDead("nonexistent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dead {
+		t.Error("expected dead=false when session doesn't exist")
+	}
+}
+
+func TestIsPaneDead_runnerError(t *testing.T) {
+	r := &mockRunner{err: errors.New("boom")}
+	c := tmux.NewClient(r)
+	_, err := c.IsPaneDead("codeherd")
+	if err == nil {
+		t.Fatal("expected error when runner fails")
+	}
+}
+
+func TestRespawnPane_ok(t *testing.T) {
+	r := &mockRunner{exitCode: 0}
+	c := tmux.NewClient(r)
+	err := c.RespawnPane("codeherd:0", "ch --no-tmux")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"respawn-pane", "-k", "-t", "codeherd:0", "ch --no-tmux"}
+	if !slices.Equal(r.lastArgs, want) {
+		t.Errorf("args = %v, want %v", r.lastArgs, want)
+	}
+}
+
+func TestRespawnPane_noCmd(t *testing.T) {
+	r := &mockRunner{exitCode: 0}
+	c := tmux.NewClient(r)
+	err := c.RespawnPane("codeherd:0", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"respawn-pane", "-k", "-t", "codeherd:0"}
+	if !slices.Equal(r.lastArgs, want) {
+		t.Errorf("args = %v, want %v", r.lastArgs, want)
+	}
+}
+
+func TestRespawnPane_error(t *testing.T) {
+	r := &mockRunner{exitCode: 1, stderr: "no such pane"}
+	c := tmux.NewClient(r)
+	err := c.RespawnPane("codeherd:0", "ch")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestRespawnPane_runnerError(t *testing.T) {
+	r := &mockRunner{err: errors.New("boom")}
+	c := tmux.NewClient(r)
+	err := c.RespawnPane("codeherd:0", "ch")
+	if err == nil {
+		t.Fatal("expected error when runner fails")
+	}
+}
+
 func TestSelectWindow(t *testing.T) {
 	r := &mockRunner{stdout: "", stderr: "", exitCode: 0}
 	c := tmux.NewClient(r)

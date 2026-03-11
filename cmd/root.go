@@ -109,8 +109,12 @@ func runTUIInTmux(tmuxClient *tmux.Client) error {
 			return fmt.Errorf("detecting tmux session: %w", err)
 		}
 
-		// Already in the codeherd session — select TUI window.
+		// Already in the codeherd session — select TUI window,
+		// respawning the pane first if it is dead.
 		if currentSession == sessionName {
+			if err := respawnIfDead(tmuxClient, sessionName); err != nil {
+				return err
+			}
 			if err := tmuxClient.SelectWindow(sessionName + ":0"); err != nil {
 				return fmt.Errorf("selecting window: %w", err)
 			}
@@ -124,20 +128,14 @@ func runTUIInTmux(tmuxClient *tmux.Client) error {
 		return fmt.Errorf("checking session: %w", err)
 	}
 	if !exists {
-		chBin, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("finding ch binary: %w", err)
+		if err := createCodeherdSession(tmuxClient, sessionName); err != nil {
+			return err
 		}
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			homeDir = "/"
+	} else {
+		// Session exists — respawn the TUI if the pane is dead.
+		if err := respawnIfDead(tmuxClient, sessionName); err != nil {
+			return err
 		}
-		if err := tmuxClient.NewSessionWithCmd(sessionName, homeDir, chBin+" --no-tmux"); err != nil {
-			return fmt.Errorf("creating codeherd session: %w", err)
-		}
-		// Keep the pane alive if ch --no-tmux exits with an error,
-		// so the user can see what went wrong.
-		_ = tmuxClient.SetOption(sessionName, "remain-on-exit", "on")
 	}
 
 	// Inside tmux, different session — switch client.
@@ -150,6 +148,46 @@ func runTUIInTmux(tmuxClient *tmux.Client) error {
 
 	// Not inside tmux — exec into tmux attach.
 	return execTmuxAttach(sessionName)
+}
+
+// createCodeherdSession creates the codeherd tmux session running the TUI.
+func createCodeherdSession(tmuxClient *tmux.Client, sessionName string) error {
+	chBin, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("finding ch binary: %w", err)
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "/"
+	}
+	if err := tmuxClient.NewSessionWithCmd(sessionName, homeDir, chBin+" --no-tmux"); err != nil {
+		return fmt.Errorf("creating codeherd session: %w", err)
+	}
+	// Keep the pane alive if ch --no-tmux exits with an error,
+	// so the user can see what went wrong.
+	_ = tmuxClient.SetOption(sessionName, "remain-on-exit", "on")
+	return nil
+}
+
+// respawnIfDead checks whether the TUI pane (window 0) is dead and respawns
+// the ch --no-tmux process if so. This recovers from the case where the TUI
+// exited (intentionally or by accident) and remain-on-exit kept the dead pane.
+func respawnIfDead(tmuxClient *tmux.Client, sessionName string) error {
+	dead, err := tmuxClient.IsPaneDead(sessionName)
+	if err != nil {
+		return fmt.Errorf("checking pane status: %w", err)
+	}
+	if !dead {
+		return nil
+	}
+	chBin, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("finding ch binary: %w", err)
+	}
+	if err := tmuxClient.RespawnPane(sessionName+":0", chBin+" --no-tmux"); err != nil {
+		return fmt.Errorf("respawning TUI: %w", err)
+	}
+	return nil
 }
 
 func runTUIDirect(tmuxClient *tmux.Client) error {
@@ -169,6 +207,14 @@ func runTUIDirect(tmuxClient *tmux.Client) error {
 	// Only used when --no-tmux and not inside tmux.
 	if fm, ok := finalModel.(tui.Model); ok && fm.PendingAttach != "" {
 		return execTmuxAttach(fm.PendingAttach)
+	}
+
+	// Normal quit — if running inside the codeherd tmux session, kill it
+	// so the user isn't left with a dead pane.
+	if insideTmux {
+		if cur, _ := tmuxClient.CurrentSession(); cur == semconv.CodeherdSessionName {
+			_ = tmuxClient.KillSession(semconv.CodeherdSessionName)
+		}
 	}
 
 	return nil

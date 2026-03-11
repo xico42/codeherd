@@ -37,30 +37,8 @@ func TestRunTUIInTmux_AlreadyInCodeherd(t *testing.T) {
 	r := &multiMockRunner{
 		responses: []mockResponse{
 			{stdout: "codeherd\n", exitCode: 0}, // display-message (CurrentSession)
+			{stdout: "0\n", exitCode: 0},        // list-panes (pane alive)
 			{stdout: "", exitCode: 0},           // select-window
-		},
-	}
-	tc := tmux.NewClient(r)
-	err := runTUIInTmux(tc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(r.calls) != 2 {
-		t.Fatalf("expected 2 calls, got %d: %v", len(r.calls), r.calls)
-	}
-	if r.calls[1][0] != "select-window" {
-		t.Errorf("expected select-window, got %v", r.calls[1])
-	}
-}
-
-func TestRunTUIInTmux_InDifferentSession(t *testing.T) {
-	t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
-
-	r := &multiMockRunner{
-		responses: []mockResponse{
-			{stdout: "other-session\n", exitCode: 0}, // display-message (CurrentSession)
-			{stdout: "", exitCode: 0},                // has-session (exists)
-			{stdout: "", exitCode: 0},                // switch-client
 		},
 	}
 	tc := tmux.NewClient(r)
@@ -71,8 +49,90 @@ func TestRunTUIInTmux_InDifferentSession(t *testing.T) {
 	if len(r.calls) != 3 {
 		t.Fatalf("expected 3 calls, got %d: %v", len(r.calls), r.calls)
 	}
-	if r.calls[2][0] != "switch-client" {
-		t.Errorf("expected switch-client, got %v", r.calls[2])
+	if r.calls[1][0] != "list-panes" {
+		t.Errorf("expected list-panes, got %v", r.calls[1])
+	}
+	if r.calls[2][0] != "select-window" {
+		t.Errorf("expected select-window, got %v", r.calls[2])
+	}
+}
+
+func TestRunTUIInTmux_AlreadyInCodeherd_DeadPane(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
+
+	r := &multiMockRunner{
+		responses: []mockResponse{
+			{stdout: "codeherd\n", exitCode: 0}, // display-message (CurrentSession)
+			{stdout: "1\n", exitCode: 0},        // list-panes (pane DEAD)
+			{stdout: "", exitCode: 0},           // respawn-pane
+			{stdout: "", exitCode: 0},           // select-window
+		},
+	}
+	tc := tmux.NewClient(r)
+	err := runTUIInTmux(tc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.calls) != 4 {
+		t.Fatalf("expected 4 calls, got %d: %v", len(r.calls), r.calls)
+	}
+	if r.calls[2][0] != "respawn-pane" {
+		t.Errorf("expected respawn-pane, got %v", r.calls[2])
+	}
+	if r.calls[3][0] != "select-window" {
+		t.Errorf("expected select-window, got %v", r.calls[3])
+	}
+}
+
+func TestRunTUIInTmux_InDifferentSession(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
+
+	r := &multiMockRunner{
+		responses: []mockResponse{
+			{stdout: "other-session\n", exitCode: 0}, // display-message (CurrentSession)
+			{stdout: "", exitCode: 0},                // has-session (exists)
+			{stdout: "0\n", exitCode: 0},             // list-panes (pane alive)
+			{stdout: "", exitCode: 0},                // switch-client
+		},
+	}
+	tc := tmux.NewClient(r)
+	err := runTUIInTmux(tc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.calls) != 4 {
+		t.Fatalf("expected 4 calls, got %d: %v", len(r.calls), r.calls)
+	}
+	if r.calls[3][0] != "switch-client" {
+		t.Errorf("expected switch-client, got %v", r.calls[3])
+	}
+}
+
+func TestRunTUIInTmux_InDifferentSession_DeadPane(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
+
+	r := &multiMockRunner{
+		responses: []mockResponse{
+			{stdout: "other-session\n", exitCode: 0}, // display-message (CurrentSession)
+			{stdout: "", exitCode: 0},                // has-session (exists)
+			{stdout: "1\n", exitCode: 0},             // list-panes (pane DEAD)
+			{stdout: "", exitCode: 0},                // respawn-pane
+			{stdout: "", exitCode: 0},                // switch-client
+		},
+	}
+	tc := tmux.NewClient(r)
+	err := runTUIInTmux(tc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.calls) != 5 {
+		t.Fatalf("expected 5 calls, got %d: %v", len(r.calls), r.calls)
+	}
+	if r.calls[2][0] != "list-panes" {
+		t.Errorf("expected list-panes, got %v", r.calls[2])
+	}
+	if r.calls[3][0] != "respawn-pane" {
+		t.Errorf("expected respawn-pane, got %v", r.calls[3])
 	}
 }
 
@@ -89,7 +149,8 @@ func TestRunTUIInTmux_NotInTmux_SessionExists(t *testing.T) {
 
 	r := &multiMockRunner{
 		responses: []mockResponse{
-			{stdout: "", exitCode: 0}, // has-session (exists)
+			{stdout: "", exitCode: 0},    // has-session (exists)
+			{stdout: "0\n", exitCode: 0}, // list-panes (pane alive)
 		},
 	}
 	tc := tmux.NewClient(r)
@@ -98,12 +159,49 @@ func TestRunTUIInTmux_NotInTmux_SessionExists(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should NOT call display-message — goes straight to has-session.
-	if len(r.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d: %v", len(r.calls), r.calls)
+	if len(r.calls) != 2 {
+		t.Fatalf("expected 2 calls, got %d: %v", len(r.calls), r.calls)
 	}
 	if r.calls[0][0] != "has-session" {
 		t.Errorf("expected has-session, got %v", r.calls[0])
+	}
+	if r.calls[1][0] != "list-panes" {
+		t.Errorf("expected list-panes, got %v", r.calls[1])
+	}
+	if attachedTo != "codeherd" {
+		t.Errorf("expected attach to codeherd, got %q", attachedTo)
+	}
+}
+
+func TestRunTUIInTmux_NotInTmux_SessionExists_DeadPane(t *testing.T) {
+	t.Setenv("TMUX", "")
+
+	origExec := execTmuxAttach
+	defer func() { execTmuxAttach = origExec }()
+	var attachedTo string
+	execTmuxAttach = func(name string) error {
+		attachedTo = name
+		return nil
+	}
+
+	r := &multiMockRunner{
+		responses: []mockResponse{
+			{stdout: "", exitCode: 0},    // has-session (exists)
+			{stdout: "1\n", exitCode: 0}, // list-panes (pane DEAD)
+			{stdout: "", exitCode: 0},    // respawn-pane
+		},
+	}
+	tc := tmux.NewClient(r)
+	err := runTUIInTmux(tc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(r.calls) != 3 {
+		t.Fatalf("expected 3 calls, got %d: %v", len(r.calls), r.calls)
+	}
+	if r.calls[2][0] != "respawn-pane" {
+		t.Errorf("expected respawn-pane, got %v", r.calls[2])
 	}
 	if attachedTo != "codeherd" {
 		t.Errorf("expected attach to codeherd, got %q", attachedTo)
@@ -176,6 +274,7 @@ func TestRunTUIInTmux_SelectWindowError(t *testing.T) {
 	r := &multiMockRunner{
 		responses: []mockResponse{
 			{stdout: "codeherd\n", exitCode: 0},                   // display-message
+			{stdout: "0\n", exitCode: 0},                          // list-panes (alive)
 			{stdout: "", stderr: "window not found", exitCode: 1}, // select-window error
 		},
 	}
@@ -193,6 +292,7 @@ func TestRunTUIInTmux_SwitchClientError(t *testing.T) {
 		responses: []mockResponse{
 			{stdout: "other\n", exitCode: 0},                       // display-message
 			{stdout: "", exitCode: 0},                              // has-session (exists)
+			{stdout: "0\n", exitCode: 0},                           // list-panes (alive)
 			{stdout: "", stderr: "no current client", exitCode: 1}, // switch-client error
 		},
 	}

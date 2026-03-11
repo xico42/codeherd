@@ -162,6 +162,37 @@ func (c *Client) SelectWindow(target string) error {
 	return nil
 }
 
+// IsPaneDead checks whether the first pane in the given session's first window
+// is dead (process exited while remain-on-exit is on).
+func (c *Client) IsPaneDead(session string) (bool, error) {
+	stdout, _, code, err := c.runner.Run("list-panes", "-t", session+":0", "-F", "#{pane_dead}")
+	if err != nil {
+		return false, fmt.Errorf("tmux list-panes: %w", err)
+	}
+	if code != 0 {
+		return false, nil // session/window doesn't exist
+	}
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	return len(lines) > 0 && lines[0] == "1", nil
+}
+
+// RespawnPane kills any running process in the target pane and starts a new
+// command. If the pane is dead (remain-on-exit), the new command revives it.
+func (c *Client) RespawnPane(target, cmd string) error {
+	args := []string{"respawn-pane", "-k", "-t", target}
+	if cmd != "" {
+		args = append(args, cmd)
+	}
+	_, stderr, code, err := c.runner.Run(args...)
+	if err != nil {
+		return fmt.Errorf("tmux respawn-pane: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("tmux respawn-pane: %s", strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
 // SessionID returns the stable tmux session_id (e.g. "$1") for a given target.
 // The target can be a session name, ID, or any tmux target accepted by -t.
 func (c *Client) SessionID(target string) (string, error) {

@@ -10,6 +10,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/project"
@@ -123,7 +124,7 @@ func newList(items []list.Item) list.Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.refreshCmd(), tickCmd())
+	return tea.Batch(m.refreshCmd(), tickCmd(), queryWindowSizeCmd())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -306,6 +307,22 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+// queryWindowSizeCmd re-queries the terminal size after a short delay and
+// sends a fresh tea.WindowSizeMsg. This corrects the initial size when the TUI
+// is launched inside a new tmux pane: the pty may not yet have the real
+// dimensions when Init() first runs, so the list height gets set incorrectly.
+// By the time the 100ms delay fires, tmux has attached and resized the pty.
+func queryWindowSizeCmd() tea.Cmd {
+	return func() tea.Msg {
+		time.Sleep(100 * time.Millisecond)
+		w, h, err := term.GetSize(os.Stdout.Fd())
+		if err != nil || w == 0 || h == 0 {
+			return nil
+		}
+		return tea.WindowSizeMsg{Width: w, Height: h}
+	}
 }
 
 // refreshCmd fetches all data from services asynchronously.

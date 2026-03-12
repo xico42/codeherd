@@ -147,11 +147,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i, item := range msg {
 			items[i] = item
 		}
-		// Preserve selection.
+		// Preserve selection. Only restore when unfiltered: when a filter is
+		// active, SetItems clears filteredItems and re-runs the filter
+		// asynchronously. Calling Select with a raw item index would set the
+		// paginator page without accounting for the (not-yet-known) filtered
+		// item count, which can cause a slice-bounds panic when the filter
+		// results arrive with fewer items than Page*PerPage.
 		var selProject, selBranch string
-		if sel, ok := m.list.SelectedItem().(Item); ok {
-			selProject = sel.Project
-			selBranch = sel.Branch
+		if m.list.FilterState() == list.Unfiltered {
+			if sel, ok := m.list.SelectedItem().(Item); ok {
+				selProject = sel.Project
+				selBranch = sel.Branch
+			}
 		}
 		cmd := m.list.SetItems(items)
 		if selProject != "" {

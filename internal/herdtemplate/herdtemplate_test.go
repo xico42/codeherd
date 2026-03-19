@@ -222,3 +222,34 @@ func (m *mockHook) Trigger(name string, attrs map[string]string, workDir string)
 	}
 	return nil
 }
+
+func TestDeterministicPort_Idempotent(t *testing.T) {
+	p1 := DeterministicPort("myapp", "feature", "api")
+	p2 := DeterministicPort("myapp", "feature", "api")
+	if p1 != p2 {
+		t.Errorf("not idempotent: %d != %d", p1, p2)
+	}
+}
+
+func TestDeterministicPort_InRange(t *testing.T) {
+	p := DeterministicPort("myapp", "feature", "api")
+	if p < 10000 || p > 59999 {
+		t.Errorf("port %d out of range 10000-59999", p)
+	}
+}
+
+func TestDeterministicPort_DifferentNames(t *testing.T) {
+	p1 := DeterministicPort("myapp", "feature", "api")
+	p2 := DeterministicPort("myapp", "feature", "db")
+	if p1 == p2 {
+		t.Errorf("same port %d for different names", p1)
+	}
+}
+
+func TestDeterministicPort_NullByteSeparation(t *testing.T) {
+	p1 := DeterministicPort("ab", "cd", "x")
+	p2 := DeterministicPort("a", "bcd", "x")
+	if p1 == p2 {
+		t.Errorf("null-byte separation failed: both hashed to %d", p1)
+	}
+}

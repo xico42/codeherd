@@ -3,17 +3,26 @@ package herdtemplate
 import (
 	"bytes"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
 
-	"github.com/xico42/codeherd/internal/envtemplate"
 	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/semconv"
 )
 
 const herdSuffix = ".herd"
+
+// DeterministicPort returns a stable port for the given project/branch/name.
+// Uses FNV-1a 32-bit hash with null-byte separators. Range: 10000–59999.
+func DeterministicPort(project, branch, name string) int {
+	key := project + "\x00" + branch + "\x00" + name
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	return int(h.Sum32()%50000) + 10000
+}
 
 // ProcessContext holds values available to .herd templates.
 type ProcessContext struct {
@@ -51,7 +60,7 @@ func (s *Service) Process(ctx ProcessContext, attrs map[string]string) error {
 
 	funcMap := template.FuncMap{
 		"port": func(name string) int {
-			return envtemplate.DeterministicPort(ctx.Project, ctx.Branch, name)
+			return DeterministicPort(ctx.Project, ctx.Branch, name)
 		},
 		"env": func(args ...string) string {
 			if len(args) == 0 {

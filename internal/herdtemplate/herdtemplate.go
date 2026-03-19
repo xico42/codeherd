@@ -30,6 +30,19 @@ type ProcessContext struct {
 	Branch       string
 	WorktreePath string
 	SessionName  string
+	DryRun       bool
+}
+
+// RenderedFile describes one template file that was processed.
+type RenderedFile struct {
+	Source string // e.g. "docker-compose.yml.herd"
+	Target string // e.g. "docker-compose.yml"
+	Output string // rendered content
+}
+
+// ProcessResult holds the outcome of a Process call.
+type ProcessResult struct {
+	Files []RenderedFile
 }
 
 // Service processes .herd template files in worktrees.
@@ -44,18 +57,21 @@ func New(hook hooks.Hook) *Service {
 
 // Process walks the worktree directory, finds all .herd files, renders them,
 // and writes the output without the .herd suffix. Triggers pre/post-template hooks.
-func (s *Service) Process(ctx ProcessContext, attrs map[string]string) error {
+// When ctx.DryRun is true, files are rendered but not written and hooks are skipped.
+func (s *Service) Process(ctx ProcessContext, attrs map[string]string) (ProcessResult, error) {
 	herdFiles, err := findHerdFiles(ctx.WorktreePath)
 	if err != nil {
-		return fmt.Errorf("scanning for .herd files: %w", err)
+		return ProcessResult{}, fmt.Errorf("scanning for .herd files: %w", err)
 	}
 
 	if len(herdFiles) == 0 {
-		return nil
+		return ProcessResult{}, nil
 	}
 
-	if err := s.hook.Trigger(semconv.HookPreTemplate, attrs, ctx.WorktreePath); err != nil {
-		return fmt.Errorf("pre-template hook: %w", err)
+	if !ctx.DryRun {
+		if err := s.hook.Trigger(semconv.HookPreTemplate, attrs, ctx.WorktreePath); err != nil {
+			return ProcessResult{}, fmt.Errorf("pre-template hook: %w", err)
+		}
 	}
 
 	funcMap := template.FuncMap{
@@ -76,17 +92,22 @@ func (s *Service) Process(ctx ProcessContext, attrs map[string]string) error {
 		},
 	}
 
+	var result ProcessResult
 	for _, path := range herdFiles {
-		if err := renderFile(path, ctx, funcMap); err != nil {
-			return fmt.Errorf("rendering %s: %w", path, err)
+		rf, err := renderFile(path, ctx, funcMap)
+		if err != nil {
+			return ProcessResult{}, fmt.Errorf("rendering %s: %w", path, err)
+		}
+		result.Files = append(result.Files, rf)
+	}
+
+	if !ctx.DryRun {
+		if err := s.hook.Trigger(semconv.HookPostTemplate, attrs, ctx.WorktreePath); err != nil {
+			return ProcessResult{}, fmt.Errorf("post-template hook: %w", err)
 		}
 	}
 
-	if err := s.hook.Trigger(semconv.HookPostTemplate, attrs, ctx.WorktreePath); err != nil {
-		return fmt.Errorf("post-template hook: %w", err)
-	}
-
-	return nil
+	return result, nil
 }
 
 func findHerdFiles(root string) ([]string, error) {
@@ -106,26 +127,33 @@ func findHerdFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-func renderFile(path string, ctx ProcessContext, funcMap template.FuncMap) error {
+func renderFile(path string, ctx ProcessContext, funcMap template.FuncMap) (RenderedFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("reading template: %w", err)
+		return RenderedFile{}, fmt.Errorf("reading template: %w", err)
 	}
 
 	tmpl, err := template.New(filepath.Base(path)).Funcs(funcMap).Parse(string(data))
 	if err != nil {
-		return fmt.Errorf("parsing template: %w", err)
+		return RenderedFile{}, fmt.Errorf("parsing template: %w", err)
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, ctx); err != nil {
-		return fmt.Errorf("executing template: %w", err)
+		return RenderedFile{}, fmt.Errorf("executing template: %w", err)
 	}
 
 	outPath := strings.TrimSuffix(path, herdSuffix)
-	if err := os.WriteFile(outPath, buf.Bytes(), 0o600); err != nil {
-		return fmt.Errorf("writing output: %w", err)
+
+	if !ctx.DryRun {
+		if err := os.WriteFile(outPath, buf.Bytes(), 0o600); err != nil {
+			return RenderedFile{}, fmt.Errorf("writing output: %w", err)
+		}
 	}
 
-	return nil
+	return RenderedFile{
+		Source: path,
+		Target: outPath,
+		Output: buf.String(),
+	}, nil
 }

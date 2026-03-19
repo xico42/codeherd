@@ -421,7 +421,7 @@ func runFileCopyAndTemplate(cfg *config.Config, projCfg config.ProjectConfig, h 
 		semconv.HookAttrBranch:       branch,
 		semconv.HookAttrWorktreePath: wtPath,
 	}
-	if err := tmplSvc.Process(herdtemplate.ProcessContext{
+	if _, err := tmplSvc.Process(herdtemplate.ProcessContext{
 		Project:      proj,
 		Branch:       branch,
 		WorktreePath: wtPath,

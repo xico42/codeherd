@@ -17,7 +17,7 @@ func TestProcess_RendersHerdFiles(t *testing.T) {
 	}
 
 	svc := New(&hooks.NoOp{})
-	err := svc.Process(ProcessContext{
+	_, err := svc.Process(ProcessContext{
 		Project:      "myapp",
 		Branch:       "feature",
 		WorktreePath: dir,
@@ -43,7 +43,7 @@ func TestProcess_StripsHerdSuffix(t *testing.T) {
 	}
 
 	svc := New(&hooks.NoOp{})
-	err := svc.Process(ProcessContext{
+	_, err := svc.Process(ProcessContext{
 		Project:      "myapp",
 		Branch:       "main",
 		WorktreePath: dir,
@@ -65,7 +65,7 @@ func TestProcess_NoHerdFiles_NoOp(t *testing.T) {
 	}
 
 	svc := New(&hooks.NoOp{})
-	err := svc.Process(ProcessContext{
+	_, err := svc.Process(ProcessContext{
 		Project:      "myapp",
 		Branch:       "main",
 		WorktreePath: dir,
@@ -84,7 +84,7 @@ func TestProcess_TemplateContext(t *testing.T) {
 	}
 
 	svc := New(&hooks.NoOp{})
-	err := svc.Process(ProcessContext{
+	_, err := svc.Process(ProcessContext{
 		Project:      "myapp",
 		Branch:       "feature",
 		WorktreePath: dir,
@@ -111,7 +111,7 @@ func TestProcess_PortFunction(t *testing.T) {
 	}
 
 	svc := New(&hooks.NoOp{})
-	err := svc.Process(ProcessContext{
+	_, err := svc.Process(ProcessContext{
 		Project:      "myapp",
 		Branch:       "feature",
 		WorktreePath: dir,
@@ -141,7 +141,7 @@ func TestProcess_TriggersHooks(t *testing.T) {
 	svc := New(mock)
 
 	attrs := map[string]string{semconv.HookAttrProject: "myapp"}
-	err := svc.Process(ProcessContext{
+	_, err := svc.Process(ProcessContext{
 		Project:      "myapp",
 		Branch:       "main",
 		WorktreePath: dir,
@@ -171,7 +171,7 @@ func TestProcess_PreHookFailureStops(t *testing.T) {
 	mock := &mockHook{failOn: semconv.HookPreTemplate}
 	svc := New(mock)
 
-	err := svc.Process(ProcessContext{
+	_, err := svc.Process(ProcessContext{
 		Project:      "myapp",
 		Branch:       "main",
 		WorktreePath: dir,
@@ -193,7 +193,7 @@ func TestProcess_BadTemplate(t *testing.T) {
 	}
 
 	svc := New(&hooks.NoOp{})
-	err := svc.Process(ProcessContext{
+	_, err := svc.Process(ProcessContext{
 		Project:      "myapp",
 		Branch:       "main",
 		WorktreePath: dir,
@@ -251,5 +251,87 @@ func TestDeterministicPort_NullByteSeparation(t *testing.T) {
 	p2 := DeterministicPort("a", "bcd", "x")
 	if p1 == p2 {
 		t.Errorf("null-byte separation failed: both hashed to %d", p1)
+	}
+}
+
+func TestProcess_DryRun_DoesNotWriteFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte("PORT={{ port \"http\" }}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	result, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "feature",
+		WorktreePath: dir,
+		SessionName:  "myapp-feature",
+		DryRun:       true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(dir, ".env")); statErr == nil {
+		t.Error("expected .env NOT to be written in dry-run mode")
+	}
+
+	if len(result.Files) != 1 {
+		t.Fatalf("expected 1 rendered file, got %d", len(result.Files))
+	}
+	if result.Files[0].Target != filepath.Join(dir, ".env") {
+		t.Errorf("target = %q, want %q", result.Files[0].Target, filepath.Join(dir, ".env"))
+	}
+	if result.Files[0].Output == "" {
+		t.Error("expected non-empty rendered output")
+	}
+}
+
+func TestProcess_DryRun_SkipsHooks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	mock := &mockHook{}
+	svc := New(mock)
+	_, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "main",
+		WorktreePath: dir,
+		SessionName:  "myapp-main",
+		DryRun:       true,
+	}, map[string]string{semconv.HookAttrProject: "myapp"})
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	if len(mock.calls) != 0 {
+		t.Errorf("expected 0 hook calls in dry-run, got %d", len(mock.calls))
+	}
+}
+
+func TestProcess_ReturnsProcessResult(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt.herd"), []byte("hello {{ .Project }}"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.yml.herd"), []byte("version: 3"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	result, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "main",
+		WorktreePath: dir,
+		SessionName:  "myapp-main",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	if len(result.Files) != 2 {
+		t.Fatalf("expected 2 rendered files, got %d", len(result.Files))
 	}
 }

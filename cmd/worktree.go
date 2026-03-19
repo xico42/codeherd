@@ -117,7 +117,7 @@ var worktreeNewCmd = &cobra.Command{
 			semconv.HookAttrBranch:       branch,
 			semconv.HookAttrWorktreePath: result.Path,
 		}
-		if err := tmplSvc.Process(herdtemplate.ProcessContext{
+		if _, err := tmplSvc.Process(herdtemplate.ProcessContext{
 			Project:      project,
 			Branch:       branch,
 			WorktreePath: result.Path,

@@ -82,8 +82,12 @@ func Execute() error {
 // that Execute() can be called multiple times (e.g. in tests) without flags
 // from a previous call leaking into the next.
 func resetAllFlags(cmd *cobra.Command) {
-	cmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
-	cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
+	reset := func(f *pflag.Flag) {
+		f.Changed = false
+		_ = f.Value.Set(f.DefValue)
+	}
+	cmd.Flags().VisitAll(reset)
+	cmd.PersistentFlags().VisitAll(reset)
 	for _, sub := range cmd.Commands() {
 		resetAllFlags(sub)
 	}

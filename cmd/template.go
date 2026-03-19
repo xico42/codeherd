@@ -130,7 +130,11 @@ func detectGitBranch(dir string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	branch := strings.TrimSpace(string(out))
+	if branch == "HEAD" {
+		return ""
+	}
+	return branch
 }
 
 func init() {

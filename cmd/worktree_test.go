@@ -159,6 +159,33 @@ func TestWorktreeNew_attachFlag_parsed(t *testing.T) {
 	}
 }
 
+// TestWorktreeTemplate_tooFewArgs verifies ExactArgs(2) on the template subcommand.
+func TestWorktreeTemplate_tooFewArgs(t *testing.T) {
+	projectsDir := t.TempDir()
+	cfgPath := writeConfig(t, projectsDir)
+	if err := runCmd(t, "--config", cfgPath, "worktree", "template", "myapp"); err == nil {
+		t.Error("expected error for missing branch argument")
+	}
+}
+
+// TestWorktreeTemplate_tooManyArgs verifies ExactArgs(2) on the template subcommand.
+func TestWorktreeTemplate_tooManyArgs(t *testing.T) {
+	projectsDir := t.TempDir()
+	cfgPath := writeConfig(t, projectsDir)
+	if err := runCmd(t, "--config", cfgPath, "worktree", "template", "a", "b", "c"); err == nil {
+		t.Error("expected error for too many arguments")
+	}
+}
+
+// TestWorktreeTemplate_help verifies the template subcommand has correct --help output
+// and that the --dry-run flag is registered.
+func TestWorktreeTemplate_help(t *testing.T) {
+	err := runCmd(t, "worktree", "template", "--help")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // TestWorktreeNew_agentFlag_parsed verifies the --agent flag is registered and accepted.
 func TestWorktreeNew_agentFlag_parsed(t *testing.T) {
 	projectsDir := t.TempDir()

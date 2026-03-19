@@ -233,6 +233,64 @@ var worktreeShellCmd = &cobra.Command{
 	},
 }
 
+// ── template ─────────────────────────────────────────────────────────────────
+
+var worktreeTemplateDryRun bool
+
+var worktreeTemplateCmd = &cobra.Command{
+	Use:   "template <project> <branch>",
+	Short: "Process .herd template files in a worktree",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		project, branch := args[0], args[1]
+
+		projCfg := cfg.Projects[project]
+		h := hooks.New(projCfg.Hooks)
+		svc := newWorktreeService()
+
+		path, err := svc.WorktreePath(project, branch)
+		if err != nil {
+			return worktreeErr(cmd, project, branch, err)
+		}
+
+		if !worktreeTemplateDryRun {
+			fmt.Fprintf(cmd.OutOrStdout(), "Processing templates...  ")
+		}
+
+		tmplSvc := herdtemplate.New(h)
+		result, err := tmplSvc.Process(herdtemplate.ProcessContext{
+			Project:      project,
+			Branch:       branch,
+			WorktreePath: path,
+			SessionName:  semconv.SessionName(project, branch),
+			DryRun:       worktreeTemplateDryRun,
+		}, map[string]string{
+			semconv.HookAttrProject:      project,
+			semconv.HookAttrBranch:       branch,
+			semconv.HookAttrWorktreePath: path,
+		})
+		if err != nil {
+			if !worktreeTemplateDryRun {
+				fmt.Fprintln(cmd.OutOrStdout())
+			}
+			return err
+		}
+
+		if worktreeTemplateDryRun {
+			for _, f := range result.Files {
+				fmt.Fprintf(cmd.OutOrStdout(), "# %s\n%s\n", f.Target, f.Output)
+			}
+			return nil
+		}
+
+		fmt.Fprintln(cmd.OutOrStdout(), "done")
+		for _, f := range result.Files {
+			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", f.Target)
+		}
+		return nil
+	},
+}
+
 // ── error helper ─────────────────────────────────────────────────────────────
 
 func worktreeErr(cmd *cobra.Command, project, branch string, err error) error {
@@ -259,9 +317,12 @@ func init() {
 
 	worktreeDeleteCmd.Flags().BoolVar(&worktreeForce, "force", false, "skip confirmation and kill any active session")
 
+	worktreeTemplateCmd.Flags().BoolVar(&worktreeTemplateDryRun, "dry-run", false, "print rendered output without writing")
+
 	worktreeCmd.AddCommand(worktreeListCmd)
 	worktreeCmd.AddCommand(worktreeNewCmd)
 	worktreeCmd.AddCommand(worktreeDeleteCmd)
 	worktreeCmd.AddCommand(worktreeShellCmd)
+	worktreeCmd.AddCommand(worktreeTemplateCmd)
 	rootCmd.AddCommand(worktreeCmd)
 }

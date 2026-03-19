@@ -74,12 +74,6 @@ func (c *Config) expandPaths() error {
 	if c.Defaults.GitIdentityFile, err = expandTilde(c.Defaults.GitIdentityFile); err != nil {
 		return err
 	}
-	for name, p := range c.Projects {
-		if p.EnvTemplate, err = expandTilde(p.EnvTemplate); err != nil {
-			return err
-		}
-		c.Projects[name] = p
-	}
 	return nil
 }
 

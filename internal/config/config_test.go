@@ -183,7 +183,6 @@ default_branch = "main"
 [projects.api]
 repo = "git@github.com:user/api.git"
 default_branch = "develop"
-env_template = "~/.config/codeherd/templates/api.env.template"
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -205,12 +204,6 @@ env_template = "~/.config/codeherd/templates/api.env.template"
 	api := cfg.Projects["api"]
 	if api.DefaultBranch != "develop" {
 		t.Errorf("api.DefaultBranch = %q, want %q", api.DefaultBranch, "develop")
-	}
-	// EnvTemplate should have ~ expanded
-	home, _ := os.UserHomeDir()
-	wantTpl := home + "/.config/codeherd/templates/api.env.template"
-	if api.EnvTemplate != wantTpl {
-		t.Errorf("api.EnvTemplate = %q, want %q", api.EnvTemplate, wantTpl)
 	}
 }
 
@@ -296,30 +289,6 @@ token = "tok"
 	}
 }
 
-// TestLoad_NoHostURL exercises the RepoPath "no host" branch via a URL-style
-// string that parses but has no host.
-func TestLoad_ProjectsWithAbsEnvTemplate(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	content := `
-[projects.api]
-repo = "git@github.com:user/api.git"
-env_template = "/absolute/path/api.env.template"
-`
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	cfg, err := config.Load(path)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	api := cfg.Projects["api"]
-	// Absolute paths must not be altered by expandTilde.
-	if api.EnvTemplate != "/absolute/path/api.env.template" {
-		t.Errorf("EnvTemplate = %q, want unchanged absolute path", api.EnvTemplate)
-	}
-}
-
 func TestConfig_Validate_EmptyConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfg, err := config.Load(filepath.Join(dir, "config.toml"))
@@ -375,7 +344,6 @@ func TestIsValidKeyPath(t *testing.T) {
 		{"profiles.heavy.unknown", false},
 		{"projects.myapp.repo", true},
 		{"projects.myapp.default_branch", true},
-		{"projects.myapp.env_template", true},
 		{"projects.myapp.nope", false},
 		{"unknown.key", false},
 		{"defaults", false},

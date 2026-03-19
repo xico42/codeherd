@@ -86,24 +86,6 @@ func TestWorktreeShell_tooFewArgs(t *testing.T) {
 	}
 }
 
-// TestWorktreeEnv_tooFewArgs verifies ExactArgs(2) on the env subcommand.
-func TestWorktreeEnv_tooFewArgs(t *testing.T) {
-	projectsDir := t.TempDir()
-	cfgPath := writeConfig(t, projectsDir)
-	if err := runCmd(t, "--config", cfgPath, "worktree", "env", "myapp"); err == nil {
-		t.Error("expected error for missing branch argument")
-	}
-}
-
-// TestWorktreeEnv_tooManyArgs verifies ExactArgs(2) guard on the env subcommand.
-func TestWorktreeEnv_tooManyArgs(t *testing.T) {
-	projectsDir := t.TempDir()
-	cfgPath := writeConfig(t, projectsDir)
-	if err := runCmd(t, "--config", cfgPath, "worktree", "env", "a", "b", "c"); err == nil {
-		t.Error("expected error for too many arguments")
-	}
-}
-
 // TestWorktreeList_withClonedProject exercises the list command when the clone
 // directory exists (service doesn't skip the project), which exercises the git
 // worktree list path.  Since the dir is not a real git repo, git will return

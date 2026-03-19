@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/envtemplate"
 	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/tmux"
@@ -41,15 +40,7 @@ type ListEntry struct {
 
 // NewResult is the result of a successful worktree creation.
 type NewResult struct {
-	Path       string
-	EnvWritten bool
-}
-
-// EnvResult is the result of env template processing.
-type EnvResult struct {
-	Output string
-	Source string
-	DryRun bool
+	Path string
 }
 
 // WorktreeRunner abstracts git worktree operations for testability.
@@ -173,24 +164,6 @@ func (s *Service) resolvePaths(project, branch string) (cloneDir, worktreesRoot,
 	return cloneDir, worktreesRoot, worktreePath, nil
 }
 
-// resolveTemplate finds the .env template for a worktree.
-// Returns ("", "", nil) when no template is configured — callers decide whether to error.
-// Priority: repo-local .env.template > config EnvTemplate path.
-func resolveTemplate(worktreePath string, projCfg config.ProjectConfig) (content, source string, err error) {
-	repoLocal := filepath.Join(worktreePath, ".env.template")
-	if data, readErr := os.ReadFile(repoLocal); readErr == nil {
-		return string(data), "repo-local", nil
-	}
-	if projCfg.EnvTemplate != "" {
-		data, readErr := os.ReadFile(projCfg.EnvTemplate)
-		if readErr != nil {
-			return "", "", fmt.Errorf("reading env template %q: %w", projCfg.EnvTemplate, readErr)
-		}
-		return string(data), projCfg.EnvTemplate, nil
-	}
-	return "", "", nil
-}
-
 // New creates a new git worktree for the given project and branch.
 func (s *Service) New(project, branch string) (NewResult, error) {
 	p, ok := s.cfg.Projects[project]
@@ -238,25 +211,7 @@ func (s *Service) New(project, branch string) (NewResult, error) {
 		return NewResult{}, fmt.Errorf("post-worktree hook: %w", err)
 	}
 
-	result := NewResult{Path: worktreePath}
-
-	content, source, _ := resolveTemplate(worktreePath, p)
-	if content != "" {
-		ctx := envtemplate.EnvTemplateContext{
-			Project:      project,
-			Branch:       branch,
-			WorktreePath: worktreePath,
-			SessionName:  semconv.SessionName(project, branch),
-		}
-		if rendered, renderErr := envtemplate.Process(content, source, ctx); renderErr == nil {
-			envPath := filepath.Join(worktreePath, ".env")
-			if writeErr := os.WriteFile(envPath, []byte(rendered), 0o600); writeErr == nil {
-				result.EnvWritten = true
-			}
-		}
-	}
-
-	return result, nil
+	return NewResult{Path: worktreePath}, nil
 }
 
 // NewFrom creates a new git worktree branching from the given start point.
@@ -303,25 +258,7 @@ func (s *Service) NewFrom(project, branch, fromBranch string) (NewResult, error)
 		return NewResult{}, fmt.Errorf("post-worktree hook: %w", err)
 	}
 
-	result := NewResult{Path: worktreePath}
-
-	content, source, _ := resolveTemplate(worktreePath, p)
-	if content != "" {
-		ctx := envtemplate.EnvTemplateContext{
-			Project:      project,
-			Branch:       branch,
-			WorktreePath: worktreePath,
-			SessionName:  semconv.SessionName(project, branch),
-		}
-		if rendered, renderErr := envtemplate.Process(content, source, ctx); renderErr == nil {
-			envPath := filepath.Join(worktreePath, ".env")
-			if writeErr := os.WriteFile(envPath, []byte(rendered), 0o600); writeErr == nil {
-				result.EnvWritten = true
-			}
-		}
-	}
-
-	return result, nil
+	return NewResult{Path: worktreePath}, nil
 }
 
 // List returns worktree entries for all configured projects, or just the named one.
@@ -423,51 +360,6 @@ func (s *Service) WorktreePath(project, branch string) (string, error) {
 		return "", fmt.Errorf("%w: %s/%s", ErrWorktreeNotFound, project, branch)
 	}
 	return worktreePath, nil
-}
-
-// Env processes the .env template for the given worktree and writes .env.
-// If dryRun is true, the rendered content is returned without writing.
-func (s *Service) Env(project, branch string, dryRun bool) (EnvResult, error) {
-	p, ok := s.cfg.Projects[project]
-	if !ok {
-		return EnvResult{}, fmt.Errorf("project %q is not configured", project)
-	}
-
-	_, _, worktreePath, err := s.resolvePaths(project, branch)
-	if err != nil {
-		return EnvResult{}, err
-	}
-	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
-		return EnvResult{}, fmt.Errorf("%w: %s/%s", ErrWorktreeNotFound, project, branch)
-	}
-
-	content, source, err := resolveTemplate(worktreePath, p)
-	if err != nil {
-		return EnvResult{}, fmt.Errorf("template error: %w", err)
-	}
-	if content == "" {
-		return EnvResult{}, fmt.Errorf("no .env.template found for %s (checked repo and config)", project)
-	}
-
-	ctx := envtemplate.EnvTemplateContext{
-		Project:      project,
-		Branch:       branch,
-		WorktreePath: worktreePath,
-		SessionName:  semconv.SessionName(project, branch),
-	}
-	rendered, err := envtemplate.Process(content, source, ctx)
-	if err != nil {
-		return EnvResult{}, fmt.Errorf("template error: %w", err)
-	}
-
-	if !dryRun {
-		envPath := filepath.Join(worktreePath, ".env")
-		if err := os.WriteFile(envPath, []byte(rendered), 0o600); err != nil {
-			return EnvResult{}, fmt.Errorf("writing .env: %w", err)
-		}
-	}
-
-	return EnvResult{Output: rendered, Source: source, DryRun: dryRun}, nil
 }
 
 // projectNames returns sorted project names. If project is non-empty, validates and

@@ -128,9 +128,6 @@ var worktreeNewCmd = &cobra.Command{
 
 		fmt.Fprintln(cmd.OutOrStdout(), "done")
 		fmt.Fprintf(cmd.OutOrStdout(), "  Path: %s\n", result.Path)
-		if result.EnvWritten {
-			fmt.Fprintf(cmd.OutOrStdout(), "  Env:  %s/.env\n", result.Path)
-		}
 
 		if worktreeNewAttach {
 			flagAgent := ""
@@ -236,40 +233,6 @@ var worktreeShellCmd = &cobra.Command{
 	},
 }
 
-// ── env ──────────────────────────────────────────────────────────────────────
-
-var worktreeEnvDryRun bool
-
-var worktreeEnvCmd = &cobra.Command{
-	Use:   "env <project> <branch>",
-	Short: "(Re)generate .env from template",
-	Args:  cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, branch := args[0], args[1]
-
-		if !worktreeEnvDryRun {
-			fmt.Fprintf(cmd.OutOrStdout(), "Processing .env.template...  ")
-		}
-
-		svc := newWorktreeService()
-		result, err := svc.Env(project, branch, worktreeEnvDryRun)
-		if err != nil {
-			if !worktreeEnvDryRun {
-				fmt.Fprintln(cmd.OutOrStdout())
-			}
-			return worktreeErr(cmd, project, branch, err)
-		}
-
-		if worktreeEnvDryRun {
-			fmt.Fprint(cmd.OutOrStdout(), result.Output)
-			return nil
-		}
-
-		fmt.Fprintln(cmd.OutOrStdout(), "done")
-		return nil
-	},
-}
-
 // ── error helper ─────────────────────────────────────────────────────────────
 
 func worktreeErr(cmd *cobra.Command, project, branch string, err error) error {
@@ -295,12 +258,10 @@ func init() {
 	worktreeNewCmd.Flags().StringVar(&worktreeNewAgent, "agent", "", "agent to use for the session (with --attach)")
 
 	worktreeDeleteCmd.Flags().BoolVar(&worktreeForce, "force", false, "skip confirmation and kill any active session")
-	worktreeEnvCmd.Flags().BoolVar(&worktreeEnvDryRun, "dry-run", false, "print generated .env without writing")
 
 	worktreeCmd.AddCommand(worktreeListCmd)
 	worktreeCmd.AddCommand(worktreeNewCmd)
 	worktreeCmd.AddCommand(worktreeDeleteCmd)
 	worktreeCmd.AddCommand(worktreeShellCmd)
-	worktreeCmd.AddCommand(worktreeEnvCmd)
 	rootCmd.AddCommand(worktreeCmd)
 }

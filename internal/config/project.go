@@ -10,7 +10,6 @@ import (
 type ProjectConfig struct {
 	Repo          string      `toml:"repo"           validate:"omitempty"`
 	DefaultBranch string      `toml:"default_branch" validate:"omitempty"`
-	EnvTemplate   string      `toml:"env_template"   validate:"omitempty"`
 	Files         []string    `toml:"files"          validate:"omitempty"`
 	Hooks         HooksConfig `toml:"hooks"`
 }

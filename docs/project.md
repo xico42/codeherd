@@ -70,7 +70,7 @@ Remote execution (spinning up ephemeral DO droplets and running sessions there) 
 
 1. **Project-aware session management** — sessions are anchored to projects and branches, with structured directory layouts and clear naming.
 2. **Named agent configurations** — define agents once in config, select at session start. Each agent has its own command, arguments, and environment.
-3. **Deterministic environment setup** — `.env.template` processing with hash-based port allocation (`port "name"`) eliminates conflicts across parallel sessions.
+3. **Deterministic environment setup** — `.herd` template processing with hash-based port allocation (`port "name"`) eliminates conflicts across parallel sessions.
 4. **Automatic project bootstrapping** — clone, create worktree, generate environment, start session — composable primitives that chain into one-step setup.
 5. **Agent-agnostic** — any CLI tool can be a named agent. codeherd manages the session container, not the agent.
 6. **TUI for fleet overview** — visual dashboard showing all sessions, their status, and quick actions (attach, start, stop).
@@ -257,7 +257,7 @@ codeherd/
 │   ├── project/         — project clone and directory management
 │   ├── tmux/            — typed tmux command wrapper
 │   ├── tui/             — Bubble Tea v2 dashboard
-│   ├── envtemplate/     — .env.template processing: deterministic ports, env var interpolation
+│   ├── herdtemplate/    — .herd template processing: deterministic ports, env var interpolation
 │   ├── semconv/         — semantic conventions (session naming, path conventions)
 │   ├── state/           — JSON state (droplet state for future remote phase)
 │   ├── do/              — godo wrapper (future remote phase)
@@ -276,7 +276,7 @@ codeherd/
 
 ### What's done
 
-- [x] Internal packages: config, project, worktree, session, tmux, envtemplate, tui, semconv
+- [x] Internal packages: config, project, worktree, session, tmux, herdtemplate, tui, semconv
 - [x] `ch config` — init, show, set, get
 - [x] `ch project` — list, show, clone
 - [x] `ch worktree` — list, new, delete, shell, env
@@ -289,7 +289,7 @@ codeherd/
 ### Next
 
 - [ ] `ch setup` — one-command project bootstrapping: clone + worktree + env + session
-- [ ] `.env.template` integration into session start (auto-generate `.env` from template before launching agent)
+- [ ] `.herd` template integration into session start (auto-render `.herd` files before launching agent)
 
 ### Future: Remote execution
 
@@ -342,4 +342,4 @@ Ideas and features that came up during development but were intentionally deferr
 | `ch config project add <name>` wizard | Came up during `config` command design | Interactive prompts for repo URL + default branch; alternative to `config set projects.<name>.repo ...` + `config set projects.<name>.default_branch ...`; no API calls needed |
 | Session groups / batch operations | Natural extension of project-awareness | Start/stop all sessions for a project; "refresh all worktrees" |
 | Agent health monitoring | TUI enhancement | Detect stuck agents, auto-restart, resource usage alerts |
-| Template-based project setup | Extension of `.env.template` | Per-project setup scripts that run after worktree creation (install deps, build, etc.) |
+| Template-based project setup | Extension of `.herd` templates | Per-project setup scripts that run after worktree creation (install deps, build, etc.) |

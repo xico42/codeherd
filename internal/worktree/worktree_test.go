@@ -519,7 +519,6 @@ func TestService_resolvePaths_invalidRepo(t *testing.T) {
 	}
 }
 
-
 func TestService_WorktreePath_unknownProject(t *testing.T) {
 	svc, _ := makeService(t, &mockGit{}, &mockTmuxRunner{})
 	_, err := svc.WorktreePath("unknown", "feature")
@@ -566,6 +565,183 @@ func TestService_WorktreePath_ok(t *testing.T) {
 	if path != worktreePath {
 		t.Errorf("path = %q, want %q", path, worktreePath)
 	}
+}
+
+func TestService_New_preHookFailure(t *testing.T) {
+	git := &mockGit{}
+	hook := &mockHook{failOn: semconv.HookPreWorktree}
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: tmpDir},
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git"},
+		},
+	}
+	tc := tmux.NewClient(&mockTmuxRunner{})
+	svc := NewService(cfg, git, tc, hook)
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.New("myapp", "feature")
+	if err == nil {
+		t.Fatal("expected error from pre-worktree hook")
+	}
+	if !strings.Contains(err.Error(), "pre-worktree hook") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestService_New_postHookFailure(t *testing.T) {
+	git := &mockGit{}
+	hook := &mockHook{failOn: semconv.HookPostWorktree}
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: tmpDir},
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git"},
+		},
+	}
+	tc := tmux.NewClient(&mockTmuxRunner{})
+	svc := NewService(cfg, git, tc, hook)
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.New("myapp", "feature")
+	if err == nil {
+		t.Fatal("expected error from post-worktree hook")
+	}
+	if !strings.Contains(err.Error(), "post-worktree hook") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestService_NewFrom_preHookFailure(t *testing.T) {
+	git := &mockGit{}
+	hook := &mockHook{failOn: semconv.HookPreWorktree}
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: tmpDir},
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git"},
+		},
+	}
+	tc := tmux.NewClient(&mockTmuxRunner{})
+	svc := NewService(cfg, git, tc, hook)
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.NewFrom("myapp", "feature", "main")
+	if err == nil {
+		t.Fatal("expected error from pre-worktree hook")
+	}
+	if !strings.Contains(err.Error(), "pre-worktree hook") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestService_NewFrom_postHookFailure(t *testing.T) {
+	git := &mockGit{}
+	hook := &mockHook{failOn: semconv.HookPostWorktree}
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: tmpDir},
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git"},
+		},
+	}
+	tc := tmux.NewClient(&mockTmuxRunner{})
+	svc := NewService(cfg, git, tc, hook)
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.NewFrom("myapp", "feature", "main")
+	if err == nil {
+		t.Fatal("expected error from post-worktree hook")
+	}
+	if !strings.Contains(err.Error(), "post-worktree hook") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestService_List_gitListError(t *testing.T) {
+	git := &mockGit{listErr: fmt.Errorf("git error")}
+	svc, tmpDir := makeService(t, git, &mockTmuxRunner{exitCode: 1})
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := svc.List("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// git.List error should be silently skipped
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries when git.List fails, got %d", len(entries))
+	}
+}
+
+func TestService_List_invalidRepoSkipped(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: tmpDir},
+		Projects: map[string]config.ProjectConfig{
+			"badrepo": {Repo: "not-a-valid-url"},
+		},
+	}
+	tc := tmux.NewClient(&mockTmuxRunner{exitCode: 1})
+	svc := NewService(cfg, &mockGit{}, tc, &mockHook{})
+
+	entries, err := svc.List("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for invalid repo, got %d", len(entries))
+	}
+}
+
+func TestService_Delete_forceKillSessionError(t *testing.T) {
+	// Use a tmux runner that returns exit 0 (session exists) for has-session
+	// but errors on kill-session
+	runner := &mockTmuxRunnerKillFails{}
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: tmpDir},
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git"},
+		},
+	}
+	tc := tmux.NewClient(runner)
+	svc := NewService(cfg, &mockGit{}, tc, &mockHook{})
+	worktreePath := cloneDirPath(tmpDir) + "__worktrees/feature"
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := svc.Delete(DeleteRequest{Project: "myapp", Branch: "feature", Force: true})
+	if err == nil {
+		t.Fatal("expected error when kill-session fails")
+	}
+	if !strings.Contains(err.Error(), "killing session") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// mockTmuxRunnerKillFails returns success for has-session but error for kill-session.
+type mockTmuxRunnerKillFails struct{}
+
+func (m *mockTmuxRunnerKillFails) Run(args ...string) (string, string, int, error) {
+	for _, a := range args {
+		if a == "kill-session" {
+			return "", "error", 1, fmt.Errorf("kill failed")
+		}
+	}
+	// has-session returns exit 0 = session exists
+	return "", "", 0, nil
 }
 
 func TestNew_TriggersHooks(t *testing.T) {

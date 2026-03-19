@@ -254,6 +254,128 @@ func TestDeterministicPort_NullByteSeparation(t *testing.T) {
 	}
 }
 
+func TestProcess_EnvFunction_NoArgs(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env }}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	result, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "main",
+		WorktreePath: dir,
+		SessionName:  "myapp-main",
+		DryRun:       true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if result.Files[0].Output != "" {
+		t.Errorf("expected empty output for env with no args, got %q", result.Files[0].Output)
+	}
+}
+
+func TestProcess_EnvFunction_WithDefault(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env "CODEHERD_TEST_UNSET_VAR_XYZ" "fallback" }}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	result, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "main",
+		WorktreePath: dir,
+		SessionName:  "myapp-main",
+		DryRun:       true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if result.Files[0].Output != "fallback" {
+		t.Errorf("expected 'fallback', got %q", result.Files[0].Output)
+	}
+}
+
+func TestProcess_EnvFunction_VarSet(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env "CODEHERD_TEST_VAR" "default" }}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	t.Setenv("CODEHERD_TEST_VAR", "actual_value")
+
+	svc := New(&hooks.NoOp{})
+	result, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "main",
+		WorktreePath: dir,
+		SessionName:  "myapp-main",
+		DryRun:       true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if result.Files[0].Output != "actual_value" {
+		t.Errorf("expected 'actual_value', got %q", result.Files[0].Output)
+	}
+}
+
+func TestProcess_EnvFunction_VarNotSet_NoDefault(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env "CODEHERD_TEST_UNSET_VAR_XYZ" }}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	result, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "main",
+		WorktreePath: dir,
+		SessionName:  "myapp-main",
+		DryRun:       true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if result.Files[0].Output != "" {
+		t.Errorf("expected empty output, got %q", result.Files[0].Output)
+	}
+}
+
+func TestProcess_PostHookFailure(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	mock := &mockHook{failOn: semconv.HookPostTemplate}
+	svc := New(mock)
+	_, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "main",
+		WorktreePath: dir,
+		SessionName:  "myapp-main",
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error when post-template hook fails")
+	}
+}
+
+func TestProcess_InvalidDirectory(t *testing.T) {
+	svc := New(&hooks.NoOp{})
+	_, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "main",
+		WorktreePath: "/nonexistent/path/that/does/not/exist",
+		SessionName:  "myapp-main",
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error for nonexistent directory")
+	}
+}
+
 func TestProcess_DryRun_DoesNotWriteFiles(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte("PORT={{ port \"http\" }}\n"), 0o644); err != nil {

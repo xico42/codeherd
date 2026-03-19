@@ -70,7 +70,7 @@ Session, project, and worktree commands run locally — they execute git/tmux/fi
 - **`internal/project`** — project clone and directory management
 - **`internal/tmux`** — typed tmux command wrapper (NewClient, Runner interface for testing)
 - **`internal/tui`** — Bubble Tea v2 dashboard with session/worktree/project views
-- **`internal/envtemplate`** — processes `.env.template` files with Go `text/template`; custom funcs: `port "name"` (deterministic FNV-1a hash), `env "VAR" "default"`; generates `.env` for worktrees
+- **`internal/herdtemplate`** — processes `.herd` template files with Go `text/template`; custom funcs: `port "name"` (deterministic FNV-1a hash), `env "VAR" "default"`; renders any `*.herd` file to its unsuffixed counterpart
 - **`internal/semconv`** — semantic conventions (session naming, path conventions)
 - **`internal/state`** — JSON state at `~/.local/share/codeherd/state.json`; tracks active droplet (future remote phase)
 - **`internal/do`** — thin wrapper around godo; `DropletsService` interface (future remote phase)
@@ -101,7 +101,7 @@ Session, project, and worktree commands run locally — they execute git/tmux/fi
 - All worktree management: list, new, delete, shell, env
 - Config management: init, show, set, get, profiles
 - TUI dashboard with session/worktree/project views
-- Env template processing with deterministic ports
+- Herd template processing with deterministic ports
 
 ### What's planned
 

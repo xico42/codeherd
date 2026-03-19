@@ -273,7 +273,7 @@ var worktreeTemplateCmd = &cobra.Command{
 			if !worktreeTemplateDryRun {
 				fmt.Fprintln(cmd.OutOrStdout())
 			}
-			return err
+			return fmt.Errorf("processing templates: %w", err)
 		}
 
 		if worktreeTemplateDryRun {

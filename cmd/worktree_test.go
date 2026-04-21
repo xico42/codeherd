@@ -20,22 +20,20 @@ func writeConfig(t *testing.T, projectsDir string) string {
 	return cfgPath
 }
 
-// TestWorktreeCmd_help verifies the worktree group has correct --help output.
-// Using only the group-level --help avoids Cobra flag state pollution on
-// subcommands.
-func TestWorktreeCmd_help(t *testing.T) {
-	if err := runCmd(t, "worktree", "--help"); err != nil {
+// TestListWorktreeCmd_help verifies the list worktree subcommand has correct --help output.
+func TestListWorktreeCmd_help(t *testing.T) {
+	if err := runCmd(t, "list", "worktree", "--help"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 // TestWorktreeList_noProjects exercises the list command against a config whose
-// projects_dir exists but no projects are cloned.  List returns 0 entries
+// projects_dir exists but no projects are cloned. List returns 0 entries
 // and prints only the header — no error.
 func TestWorktreeList_noProjects(t *testing.T) {
 	projectsDir := t.TempDir()
 	cfgPath := writeConfig(t, projectsDir)
-	if err := runCmd(t, "--config", cfgPath, "worktree", "list"); err != nil {
+	if err := runCmd(t, "--config", cfgPath, "list", "worktree"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -45,50 +43,55 @@ func TestWorktreeList_noProjects(t *testing.T) {
 func TestWorktreeList_unknownProject(t *testing.T) {
 	projectsDir := t.TempDir()
 	cfgPath := writeConfig(t, projectsDir)
-	if err := runCmd(t, "--config", cfgPath, "worktree", "list", "nosuchproject"); err == nil {
+	if err := runCmd(t, "--config", cfgPath, "list", "worktree", "nosuchproject"); err == nil {
 		t.Error("expected error for unknown project, got nil")
 	}
 }
 
-// TestWorktreeNew_tooFewArgs verifies ExactArgs(2) on the new subcommand.
-func TestWorktreeNew_tooFewArgs(t *testing.T) {
+// TestCreateWorktreeCmd_help verifies the create worktree subcommand has correct --help output.
+func TestCreateWorktreeCmd_help(t *testing.T) {
+	if err := runCmd(t, "create", "worktree", "--help"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestDeleteWorktreeCmd_help verifies the delete worktree subcommand has correct --help output.
+func TestDeleteWorktreeCmd_help(t *testing.T) {
+	if err := runCmd(t, "delete", "worktree", "--help"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestWorktreeCreate_tooFewArgs verifies ExactArgs(2) on the create worktree subcommand.
+func TestWorktreeCreate_tooFewArgs(t *testing.T) {
 	projectsDir := t.TempDir()
 	cfgPath := writeConfig(t, projectsDir)
-	if err := runCmd(t, "--config", cfgPath, "worktree", "new", "myapp"); err == nil {
+	if err := runCmd(t, "--config", cfgPath, "create", "worktree", "myapp"); err == nil {
 		t.Error("expected error for missing branch argument")
 	}
 }
 
-// TestWorktreeNew_tooManyArgs verifies ExactArgs(2) on the new subcommand.
-func TestWorktreeNew_tooManyArgs(t *testing.T) {
+// TestWorktreeCreate_tooManyArgs verifies ExactArgs(2) on the create worktree subcommand.
+func TestWorktreeCreate_tooManyArgs(t *testing.T) {
 	projectsDir := t.TempDir()
 	cfgPath := writeConfig(t, projectsDir)
-	if err := runCmd(t, "--config", cfgPath, "worktree", "new", "a", "b", "c"); err == nil {
+	if err := runCmd(t, "--config", cfgPath, "create", "worktree", "a", "b", "c"); err == nil {
 		t.Error("expected error for too many arguments")
 	}
 }
 
-// TestWorktreeDelete_tooFewArgs verifies ExactArgs(2) on the delete subcommand.
+// TestWorktreeDelete_tooFewArgs verifies ExactArgs(2) on the delete worktree subcommand.
 func TestWorktreeDelete_tooFewArgs(t *testing.T) {
 	projectsDir := t.TempDir()
 	cfgPath := writeConfig(t, projectsDir)
-	if err := runCmd(t, "--config", cfgPath, "worktree", "delete", "myapp"); err == nil {
-		t.Error("expected error for missing branch argument")
-	}
-}
-
-// TestWorktreeShell_tooFewArgs verifies ExactArgs(2) on the shell subcommand.
-func TestWorktreeShell_tooFewArgs(t *testing.T) {
-	projectsDir := t.TempDir()
-	cfgPath := writeConfig(t, projectsDir)
-	if err := runCmd(t, "--config", cfgPath, "worktree", "shell", "myapp"); err == nil {
+	if err := runCmd(t, "--config", cfgPath, "delete", "worktree", "myapp"); err == nil {
 		t.Error("expected error for missing branch argument")
 	}
 }
 
 // TestWorktreeList_withClonedProject exercises the list command when the clone
 // directory exists (service doesn't skip the project), which exercises the git
-// worktree list path.  Since the dir is not a real git repo, git will return
+// worktree list path. Since the dir is not a real git repo, git will return
 // an error — that's acceptable; we only verify there is no panic.
 func TestWorktreeList_withClonedProject(t *testing.T) {
 	projectsDir := t.TempDir()
@@ -98,7 +101,7 @@ func TestWorktreeList_withClonedProject(t *testing.T) {
 	}
 	cfgPath := writeConfig(t, projectsDir)
 	// May return error (not a git repo); that's fine — no panic is the goal.
-	runCmd(t, "--config", cfgPath, "worktree", "list") //nolint:errcheck
+	runCmd(t, "--config", cfgPath, "list", "worktree") //nolint:errcheck
 }
 
 // TestWorktreeDelete_abortedPrompt exercises the delete confirmation flow by
@@ -122,13 +125,21 @@ func TestWorktreeDelete_abortedPrompt(t *testing.T) {
 	os.Stdin = r
 	defer func() { os.Stdin = origStdin }()
 
-	if err := runCmd(t, "--config", cfgPath, "worktree", "delete", "myapp", "feature"); err != nil {
+	if err := runCmd(t, "--config", cfgPath, "delete", "worktree", "myapp", "feature"); err != nil {
 		t.Logf("delete returned error (acceptable): %v", err)
 	}
 }
 
-// TestWorktreeNew_fromFlag_parsed verifies the --from flag is registered and accepted.
-func TestWorktreeNew_fromFlag_parsed(t *testing.T) {
+// TestWorktreeDelete_forceFlag_parsed verifies the --force flag is registered on the
+// delete worktree subcommand by checking --help output does not fail.
+func TestWorktreeDelete_forceFlag_parsed(t *testing.T) {
+	if err := runCmd(t, "delete", "worktree", "--help"); err != nil {
+		t.Fatalf("delete worktree --help returned error: %v", err)
+	}
+}
+
+// TestWorktreeCreate_fromFlag_parsed verifies the --from flag is registered and accepted.
+func TestWorktreeCreate_fromFlag_parsed(t *testing.T) {
 	projectsDir := t.TempDir()
 	// Create the clone dir so we get past "not cloned" check
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
@@ -136,15 +147,15 @@ func TestWorktreeNew_fromFlag_parsed(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgPath := writeConfig(t, projectsDir)
-	err := runCmd(t, "--config", cfgPath, "worktree", "new", "myapp", "feature", "--from", "main")
+	err := runCmd(t, "--config", cfgPath, "create", "worktree", "myapp", "feature", "--from", "main")
 	// Will fail because it's not a real git repo, but should NOT fail with "unknown flag"
 	if err != nil && strings.Contains(err.Error(), "unknown flag") {
 		t.Fatal("--from flag not registered")
 	}
 }
 
-// TestWorktreeNew_attachFlag_parsed verifies the --attach flag is registered and accepted.
-func TestWorktreeNew_attachFlag_parsed(t *testing.T) {
+// TestWorktreeCreate_attachFlag_parsed verifies the --attach flag is registered and accepted.
+func TestWorktreeCreate_attachFlag_parsed(t *testing.T) {
 	projectsDir := t.TempDir()
 	// Create the clone dir so we get past "not cloned" check
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
@@ -152,42 +163,15 @@ func TestWorktreeNew_attachFlag_parsed(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgPath := writeConfig(t, projectsDir)
-	err := runCmd(t, "--config", cfgPath, "worktree", "new", "myapp", "feature", "--attach")
+	err := runCmd(t, "--config", cfgPath, "create", "worktree", "myapp", "feature", "--attach")
 	// Will fail because it's not a real git repo, but should NOT fail with "unknown flag"
 	if err != nil && strings.Contains(err.Error(), "unknown flag") {
 		t.Fatal("--attach flag not registered")
 	}
 }
 
-// TestWorktreeTemplate_tooFewArgs verifies ExactArgs(2) on the template subcommand.
-func TestWorktreeTemplate_tooFewArgs(t *testing.T) {
-	projectsDir := t.TempDir()
-	cfgPath := writeConfig(t, projectsDir)
-	if err := runCmd(t, "--config", cfgPath, "worktree", "template", "myapp"); err == nil {
-		t.Error("expected error for missing branch argument")
-	}
-}
-
-// TestWorktreeTemplate_tooManyArgs verifies ExactArgs(2) on the template subcommand.
-func TestWorktreeTemplate_tooManyArgs(t *testing.T) {
-	projectsDir := t.TempDir()
-	cfgPath := writeConfig(t, projectsDir)
-	if err := runCmd(t, "--config", cfgPath, "worktree", "template", "a", "b", "c"); err == nil {
-		t.Error("expected error for too many arguments")
-	}
-}
-
-// TestWorktreeTemplate_help verifies the template subcommand has correct --help output
-// and that the --dry-run flag is registered.
-func TestWorktreeTemplate_help(t *testing.T) {
-	err := runCmd(t, "worktree", "template", "--help")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// TestWorktreeNew_agentFlag_parsed verifies the --agent flag is registered and accepted.
-func TestWorktreeNew_agentFlag_parsed(t *testing.T) {
+// TestWorktreeCreate_agentFlag_parsed verifies the --agent flag is registered and accepted.
+func TestWorktreeCreate_agentFlag_parsed(t *testing.T) {
 	projectsDir := t.TempDir()
 	// Create the clone dir so we get past "not cloned" check
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
@@ -195,7 +179,7 @@ func TestWorktreeNew_agentFlag_parsed(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgPath := writeConfig(t, projectsDir)
-	err := runCmd(t, "--config", cfgPath, "worktree", "new", "myapp", "feature", "--attach", "--agent", "claude")
+	err := runCmd(t, "--config", cfgPath, "create", "worktree", "myapp", "feature", "--attach", "--agent", "claude")
 	// Will fail because it's not a real git repo, but should NOT fail with "unknown flag"
 	if err != nil && strings.Contains(err.Error(), "unknown flag") {
 		t.Fatal("--agent flag not registered")

@@ -314,8 +314,8 @@ type DeleteRequest struct {
 }
 
 // Delete removes a git worktree. Returns ErrWorktreeNotFound if the worktree
-// directory does not exist, ErrSessionRunning if a tmux session is active and
-// Force is false.
+// directory does not exist, ErrSessionRunning if any tmux session (agent or
+// shell) is active and Force is false.
 func (s *Service) Delete(req DeleteRequest) error {
 	cloneDir, _, worktreePath, err := s.resolvePaths(req.Project, req.Branch)
 	if err != nil {
@@ -326,17 +326,23 @@ func (s *Service) Delete(req DeleteRequest) error {
 		return fmt.Errorf("%w: %s/%s", ErrWorktreeNotFound, req.Project, req.Branch)
 	}
 
-	sessionName := semconv.SessionName(req.Project, req.Branch)
-	running, err := s.tmux.HasSession(sessionName)
-	if err != nil {
-		return fmt.Errorf("checking tmux session: %w", err)
+	sessionNames := []string{
+		semconv.SessionName(req.Project, req.Branch),
+		semconv.ShellSessionName(req.Project, req.Branch),
 	}
-	if running && !req.Force {
-		return fmt.Errorf("%w: %s", ErrSessionRunning, sessionName)
-	}
-	if running && req.Force {
-		if err := s.tmux.KillSession(sessionName); err != nil {
-			return fmt.Errorf("killing session: %w", err)
+
+	for _, name := range sessionNames {
+		running, err := s.tmux.HasSession(name)
+		if err != nil {
+			return fmt.Errorf("checking tmux session: %w", err)
+		}
+		if running && !req.Force {
+			return fmt.Errorf("%w: %s", ErrSessionRunning, name)
+		}
+		if running && req.Force {
+			if err := s.tmux.KillSession(name); err != nil {
+				return fmt.Errorf("killing session: %w", err)
+			}
 		}
 	}
 

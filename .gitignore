@@ -4,3 +4,7 @@ ch
 *.toml.local
 vendor/
 *.out
+
+# Per-user/tool state
+.serena/
+.golangci.bck.yml

@@ -166,7 +166,7 @@ API_KEY={{ env "API_KEY" "dev-key-for-local" }}
 SESSION={{ .SessionName }}
 ```
 
-Running `ch worktree new myapp feature` renders this to `.env`:
+Running `ch create worktree myapp feature` renders this to `.env`:
 
 ```
 # .env (generated)
@@ -232,17 +232,14 @@ make install    # builds and installs to ~/.local/bin/ch
 ## Quick Start
 
 ```bash
-# Initialize config
-ch config init
-
 # Configure a project (edit ~/.config/codeherd/config.toml)
-ch config show
+# See the Configuration section above for the full config format
 
 # Clone the project
-ch project clone myapp
+ch clone project myapp
 
 # Create a worktree and start a session
-ch session start myapp feature --agent claude --attach
+ch create session myapp feature --agent claude --attach
 ```
 
 Or use the interactive TUI:
@@ -256,15 +253,17 @@ ch
 | Command | Description |
 |---|---|
 | `ch` | Launch the TUI dashboard |
-| `ch project list` | List configured projects |
-| `ch project clone <name>` | Clone a project |
-| `ch worktree new <project> <branch>` | Create a worktree |
-| `ch worktree list` | List all worktrees |
-| `ch session start <project> <branch>` | Start an agent session |
-| `ch session list` | List active sessions |
-| `ch session attach <session>` | Attach to a session |
-| `ch session stop <session>` | Stop a session |
-| `ch config init` | Create default config |
+| `ch list project` | List configured projects |
+| `ch show project <name>` | Show project details |
+| `ch clone project <name>` | Clone a project |
+| `ch list worktree` | List all worktrees |
+| `ch create worktree <project> <branch>` | Create a worktree |
+| `ch delete worktree <project> <branch>` | Delete a worktree |
+| `ch list session` | List active sessions |
+| `ch create session <project> <branch>` | Start an agent session (use `--shell` for a plain shell) |
+| `ch attach session <project> <branch>` | Attach to a session |
+| `ch show session <project> <branch>` | Show session details |
+| `ch delete session <project> <branch>` | Stop a session |
 
 ## Development
 

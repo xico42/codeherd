@@ -10,7 +10,6 @@ import (
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/hooks"
-	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/tmux"
 )
 
@@ -844,15 +843,18 @@ func TestUpdateAgentPicker_View(t *testing.T) {
 
 // ── shellAction with selection tests ──────────────────────────────────────────
 
+// TestShellAction_worktreeItem_sessionExists: ShellSessionID is set, so
+// shellAction returns an attachMsg with that ID immediately — no tmux calls.
 func TestShellAction_worktreeItem_sessionExists(t *testing.T) {
-	runner := &mockTmuxRunner{
-		responses: []mockTmuxResponse{
-			{stdout: "", exitCode: 0}, // has-session (exists)
-		},
-	}
-	client := tmux.NewClient(runner)
+	client := tmux.NewClient(&mockTmuxRunner{})
 
-	items := []Item{{Project: "myapp", Branch: "feat", Path: "/tmp/wt", Group: groupWorktree}}
+	items := []Item{{
+		Project:        "myapp",
+		Branch:         "feat",
+		Path:           t.TempDir(),
+		Group:          groupWorktree,
+		ShellSessionID: "$42",
+	}}
 	listItems := make([]list.Item, len(items))
 	for i, it := range items {
 		listItems[i] = it
@@ -869,28 +871,36 @@ func TestShellAction_worktreeItem_sessionExists(t *testing.T) {
 	if !ok {
 		t.Fatalf("cmd() returned %T, want attachMsg", msg)
 	}
-	want := semconv.ShellSessionName("myapp", "feat")
-	if am.session != want {
-		t.Errorf("session = %q, want %q", am.session, want)
+	if am.session != "$42" {
+		t.Errorf("session = %q, want $42", am.session)
 	}
 }
 
+// TestShellAction_worktreeItem_sessionCreated: no existing shell session;
+// session.Service.Start is called which executes the full tmux sequence.
+// The attachMsg.session value is the stable session ID returned by SessionID().
 func TestShellAction_worktreeItem_sessionCreated(t *testing.T) {
 	runner := &mockTmuxRunner{
 		responses: []mockTmuxResponse{
-			{stdout: "", exitCode: 0}, // new-session
-			{stdout: "", exitCode: 0}, // set-option (canonical name)
-			{stdout: "", exitCode: 0}, // set-option (session type)
+			{stdout: "", exitCode: 1},      // list-sessions → no sessions (exit 1 = empty)
+			{stdout: "", exitCode: 0},      // new-session-with-env
+			{stdout: "", exitCode: 0},      // set-option @codeherd_status
+			{stdout: "", exitCode: 0},      // set-option @codeherd_started_at
+			{stdout: "", exitCode: 0},      // set-option @codeherd_canonical_name
+			{stdout: "", exitCode: 0},      // set-option @codeherd_session_type
+			{stdout: "$99\n", exitCode: 0}, // display-message → session_id
 		},
 	}
 	client := tmux.NewClient(runner)
 
-	items := []Item{{Project: "myapp", Branch: "feat", Path: "/tmp/wt", Group: groupWorktree}}
+	path := t.TempDir()
+	items := []Item{{Project: "myapp", Branch: "feat", Path: path, Group: groupWorktree}}
 	listItems := make([]list.Item, len(items))
 	for i, it := range items {
 		listItems[i] = it
 	}
-	m := Model{screen: screenList, tmuxClient: client}
+	cfg := &config.Config{}
+	m := Model{screen: screenList, tmuxClient: client, cfg: cfg}
 	m.list = newList(listItems)
 
 	cmd := m.shellAction()
@@ -902,23 +912,27 @@ func TestShellAction_worktreeItem_sessionCreated(t *testing.T) {
 	if !ok {
 		t.Fatalf("cmd() returned %T, want attachMsg", msg)
 	}
-	want := semconv.ShellSessionName("myapp", "feat")
-	if am.session != want {
-		t.Errorf("session = %q, want %q", am.session, want)
+	// attachMsg.session is now the stable session ID from SessionID(), not the tmux name.
+	if am.session != "$99" {
+		t.Errorf("session = %q, want $99", am.session)
 	}
 }
 
+// TestShellAction_newSessionExecError: ListSessions succeeds (no sessions),
+// then NewSessionWithEnv fails at the exec level (runner returns error).
 func TestShellAction_newSessionExecError(t *testing.T) {
-	// NewSession runner error (exec failure).
-	errRunner := &errOnCallRunner{errOnCall: 0}
+	// errOnCallRunner: call 0 = list-sessions (succeeds, empty), call 1 = new-session (exec error).
+	errRunner := &errOnCallRunner{errOnCall: 1}
 	client := tmux.NewClient(errRunner)
 
-	items := []Item{{Project: "myapp", Branch: "feat", Path: "/tmp/wt", Group: groupWorktree}}
+	path := t.TempDir()
+	items := []Item{{Project: "myapp", Branch: "feat", Path: path, Group: groupWorktree}}
 	listItems := make([]list.Item, len(items))
 	for i, it := range items {
 		listItems[i] = it
 	}
-	m := Model{screen: screenList, tmuxClient: client}
+	cfg := &config.Config{}
+	m := Model{screen: screenList, tmuxClient: client, cfg: cfg}
 	m.list = newList(listItems)
 
 	cmd := m.shellAction()
@@ -927,24 +941,29 @@ func TestShellAction_newSessionExecError(t *testing.T) {
 	}
 	msg := cmd()
 	if _, ok := msg.(errMsg); !ok {
-		t.Errorf("cmd() returned %T, want errMsg on NewSession error", msg)
+		t.Errorf("cmd() returned %T, want errMsg on NewSessionWithEnv exec error", msg)
 	}
 }
 
+// TestShellAction_newSessionError: ListSessions succeeds (no sessions),
+// then NewSessionWithEnv returns a non-zero exit code.
 func TestShellAction_newSessionError(t *testing.T) {
 	runner := &mockTmuxRunner{
 		responses: []mockTmuxResponse{
-			{stdout: "", exitCode: 1}, // new-session (fails)
+			{stdout: "", exitCode: 1}, // list-sessions → no sessions (exit 1 = empty)
+			{stdout: "", exitCode: 1}, // new-session-with-env → fails (non-zero exit)
 		},
 	}
 	client := tmux.NewClient(runner)
 
-	items := []Item{{Project: "myapp", Branch: "feat", Path: "/tmp/wt", Group: groupWorktree}}
+	path := t.TempDir()
+	items := []Item{{Project: "myapp", Branch: "feat", Path: path, Group: groupWorktree}}
 	listItems := make([]list.Item, len(items))
 	for i, it := range items {
 		listItems[i] = it
 	}
-	m := Model{screen: screenList, tmuxClient: client}
+	cfg := &config.Config{}
+	m := Model{screen: screenList, tmuxClient: client, cfg: cfg}
 	m.list = newList(listItems)
 
 	cmd := m.shellAction()
@@ -953,7 +972,7 @@ func TestShellAction_newSessionError(t *testing.T) {
 	}
 	msg := cmd()
 	if _, ok := msg.(errMsg); !ok {
-		t.Errorf("cmd() returned %T, want errMsg on NewSession error", msg)
+		t.Errorf("cmd() returned %T, want errMsg on NewSessionWithEnv exit error", msg)
 	}
 }
 

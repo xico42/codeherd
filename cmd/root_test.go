@@ -33,10 +33,15 @@ func TestExecute_Subcommands(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := dir + "/config.toml"
 
-	subcommands := []string{"up", "down", "status", "ssh", "config", "project", "worktree", "session"}
+	subcommands := [][]string{
+		{"list", "project"},
+		{"list", "worktree"},
+		{"list", "session"},
+	}
 	for _, sub := range subcommands {
-		t.Run(sub, func(t *testing.T) {
-			err := runCmd(t, "--config", cfgPath, sub)
+		t.Run(sub[0], func(t *testing.T) {
+			args := append([]string{"--config", cfgPath}, sub...)
+			err := runCmd(t, args...)
 			if err != nil {
 				t.Errorf("Execute(%q) = %v, want nil", sub, err)
 			}
@@ -49,7 +54,7 @@ func TestExecute_Subcommands(t *testing.T) {
 func TestExecute_ConfigLoadError(t *testing.T) {
 	dir := t.TempDir()
 	// A directory path will cause os.ReadFile to fail with a non-ErrNotExist error.
-	err := runCmd(t, "--config", dir, "up")
+	err := runCmd(t, "--config", dir, "list", "session")
 	if err == nil {
 		t.Error("Execute() with unreadable config = nil, want error")
 	}

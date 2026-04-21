@@ -167,6 +167,41 @@ func TestCopy_HookFailureStops(t *testing.T) {
 	}
 }
 
+func TestCopy_PostHookFailure(t *testing.T) {
+	baseDir := t.TempDir()
+	targetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	mock := &mockHook{failOn: semconv.HookPostCopy}
+	svc := New(mock)
+
+	err := svc.Copy([]string{"file.txt"}, baseDir, targetDir, nil)
+	if err == nil {
+		t.Error("expected error when post-copy hook fails")
+	}
+}
+
+func TestResolveSrc_TildeExpansion(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir")
+	}
+	got := resolveSrc("~/somefile.txt", "/base")
+	want := filepath.Join(home, "somefile.txt")
+	if got != want {
+		t.Errorf("resolveSrc(~/somefile.txt) = %q, want %q", got, want)
+	}
+}
+
+func TestResolveSrc_AbsolutePath(t *testing.T) {
+	got := resolveSrc("/abs/path/file.txt", "/base")
+	if got != "/abs/path/file.txt" {
+		t.Errorf("resolveSrc(/abs/...) = %q, want /abs/path/file.txt", got)
+	}
+}
+
 type mockHook struct {
 	calls  []hookCall
 	failOn string

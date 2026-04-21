@@ -94,6 +94,19 @@ func TestParseWorktreePorcelain_empty(t *testing.T) {
 	}
 }
 
+// TestParseWorktreePorcelain_noTrailingNewline exercises the tail-append path
+// where the last entry is not followed by a blank line.
+func TestParseWorktreePorcelain_noTrailingNewline(t *testing.T) {
+	input := "worktree /home/user/projects/myapp\nHEAD abc123\nbranch refs/heads/main"
+	got := parseWorktreePorcelain(input)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if got[0].Path != "/home/user/projects/myapp" || got[0].Branch != "main" {
+		t.Errorf("unexpected entry: %+v", got[0])
+	}
+}
+
 // mockGit records calls and controls return values.
 type mockGit struct {
 	addErr               error
@@ -742,6 +755,76 @@ func (m *mockTmuxRunnerKillFails) Run(args ...string) (string, string, int, erro
 	}
 	// has-session returns exit 0 = session exists
 	return "", "", 0, nil
+}
+
+// mockTmuxRunnerPerSession simulates tmux with per-session state. Sessions in
+// activeSessions are considered running (has-session exits 0). Killed session
+// names are collected in killedSessions.
+type mockTmuxRunnerPerSession struct {
+	activeSessions map[string]bool
+	killedSessions []string
+}
+
+func (m *mockTmuxRunnerPerSession) Run(args ...string) (string, string, int, error) {
+	// Identify command and target from args like ["has-session", "-t", "<name>"]
+	// or ["kill-session", "-t", "<name>"].
+	if len(args) < 3 {
+		return "", "", 1, nil
+	}
+	cmd, target := args[0], args[2]
+	switch cmd {
+	case "has-session":
+		if m.activeSessions[target] {
+			return "", "", 0, nil
+		}
+		return "", "", 1, nil
+	case "kill-session":
+		m.killedSessions = append(m.killedSessions, target)
+		return "", "", 0, nil
+	}
+	return "", "", 1, nil
+}
+
+func TestService_Delete_Force_KillsBothSessionTypes(t *testing.T) {
+	agentSession := semconv.SessionName("myapp", "feature")
+	shellSession := semconv.ShellSessionName("myapp", "feature")
+
+	runner := &mockTmuxRunnerPerSession{
+		activeSessions: map[string]bool{
+			agentSession: true,
+			shellSession: true,
+		},
+	}
+	git := &mockGit{}
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: tmpDir},
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git"},
+		},
+	}
+	tc := tmux.NewClient(runner)
+	svc := NewService(cfg, git, tc, &mockHook{})
+
+	worktreePath := cloneDirPath(tmpDir) + "__worktrees/feature"
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.Delete(DeleteRequest{Project: "myapp", Branch: "feature", Force: true}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	killed := make(map[string]bool, len(runner.killedSessions))
+	for _, s := range runner.killedSessions {
+		killed[s] = true
+	}
+	if !killed[agentSession] {
+		t.Errorf("expected agent session %q to be killed, killed: %v", agentSession, runner.killedSessions)
+	}
+	if !killed[shellSession] {
+		t.Errorf("expected shell session %q to be killed, killed: %v", shellSession, runner.killedSessions)
+	}
 }
 
 func TestNew_TriggersHooks(t *testing.T) {

@@ -49,10 +49,10 @@ func initBareRepo(t *testing.T, cloneDir string) {
 	}
 }
 
-// TestSessionStart_autoCreate_createsWorktreeAndStartsSession verifies that
-// session start creates the worktree when it is missing and the project is
+// TestCreateSession_autoCreate_createsWorktreeAndStartsSession verifies that
+// create session creates the worktree when it is missing and the project is
 // cloned. Requires tmux to be available.
-func TestSessionStart_autoCreate_createsWorktreeAndStartsSession(t *testing.T) {
+func TestCreateSession_autoCreate_createsWorktreeAndStartsSession(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
@@ -63,45 +63,12 @@ func TestSessionStart_autoCreate_createsWorktreeAndStartsSession(t *testing.T) {
 
 	cfgPath := writeSessionConfigWithProjectsDir(t, projectsDir)
 
-	// No worktree exists yet — session start should create it automatically.
-	err := runCmd(t, "--config", cfgPath, "session", "start", "myapp", "feat")
+	// No worktree exists yet — create session should create it automatically.
+	err := runCmd(t, "--config", cfgPath, "create", "session", "myapp", "feat")
 	if err != nil {
-		t.Fatalf("session start with auto-create = %v, want nil", err)
+		t.Fatalf("create session with auto-create = %v, want nil", err)
 	}
 
 	// Clean up the tmux session.
 	exec.Command("tmux", "kill-session", "-t", "myapp-feat").Run()
-}
-
-// TestSessionStart_noCreate_failsWhenWorktreeMissing verifies that --no-create
-// causes the command to exit non-zero when the worktree does not exist.
-// Because sessionErr calls os.Exit(1), we test this via a subprocess.
-func TestSessionStart_noCreate_failsWhenWorktreeMissing(t *testing.T) {
-	projectsDir := t.TempDir()
-	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	initBareRepo(t, cloneDir)
-
-	cfgPath := writeSessionConfigWithProjectsDir(t, projectsDir)
-
-	// Re-exec this test binary as a subprocess so os.Exit(1) doesn't kill the test.
-	cmd := exec.Command(os.Args[0],
-		"-test.run=TestSessionStart_noCreate_subprocess",
-		"-test.v",
-	)
-	cmd.Env = append(os.Environ(),
-		"DEVENV_TEST_SUBPROCESS=1",
-		"DEVENV_TEST_CFG="+cfgPath,
-	)
-	err := cmd.Run()
-	if err == nil {
-		t.Fatal("expected non-zero exit, got nil")
-	}
-}
-
-func TestSessionStart_noCreate_subprocess(t *testing.T) {
-	if os.Getenv("DEVENV_TEST_SUBPROCESS") != "1" {
-		t.Skip("not a subprocess invocation")
-	}
-	cfgPath := os.Getenv("DEVENV_TEST_CFG")
-	runCmd(t, "--config", cfgPath, "session", "start", "--no-create", "myapp", "feat") //nolint:errcheck
 }

@@ -14,7 +14,7 @@ A Claude Code plugin that tracks codeherd session status and sends desktop notif
 ## Prerequisites
 
 - `codeherd` must be installed and available in PATH
-- Sessions must be started via `ch session start`
+- Sessions must be started via `ch create session`
 
 ## Installation
 

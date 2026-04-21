@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,11 +23,6 @@ import (
 	"github.com/xico42/codeherd/internal/worktree"
 )
 
-func newSessionService() *session.Service {
-	tc := tmux.NewClient(tmux.NewRealRunner())
-	return session.NewService(tc, &hooks.NoOp{})
-}
-
 // resolveAgentName returns the agent name from the flag or config default.
 func resolveAgentName(flagValue string) (string, error) {
 	if flagValue != "" {
@@ -36,181 +32,6 @@ func resolveAgentName(flagValue string) (string, error) {
 		return cfg.Defaults.Agent, nil
 	}
 	return "", fmt.Errorf("no agent specified; use --agent or set defaults.agent in config")
-}
-
-var sessionCmd = &cobra.Command{
-	Use:     "session",
-	Short:   "Manage agent sessions",
-	GroupID: "sessions",
-}
-
-// ── start ────────────────────────────────────────────────────────────────────
-
-var sessionStartAttach bool
-var sessionStartNoCreate bool
-var sessionStartAgent string
-
-var sessionStartCmd = &cobra.Command{
-	Use:   "start <project> <branch>",
-	Short: "Start a new agent session in a worktree",
-	Args:  cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		project, branch := args[0], args[1]
-
-		flagAgent := ""
-		if cmd.Flags().Changed("agent") {
-			flagAgent = sessionStartAgent
-		}
-		agentName, err := resolveAgentName(flagAgent)
-		if err != nil {
-			return err
-		}
-		agent, err := cfg.AgentByName(agentName)
-		if err != nil {
-			return fmt.Errorf("resolving agent: %w", err)
-		}
-
-		projCfg := cfg.Projects[project]
-		h := hooks.New(projCfg.Hooks)
-
-		wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), h)
-		path, err := wtSvc.WorktreePath(project, branch)
-		if err != nil {
-			if errors.Is(err, worktree.ErrWorktreeNotFound) && !sessionStartNoCreate {
-				fmt.Fprintf(cmd.OutOrStdout(), "Worktree %s/%s not found, creating...  ", project, branch)
-				result, createErr := wtSvc.New(project, branch)
-				if createErr != nil {
-					fmt.Fprintln(cmd.OutOrStdout())
-					return worktreeErr(cmd, project, branch, createErr)
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), "done")
-				path = result.Path
-
-				// File copy
-				if len(projCfg.Files) > 0 {
-					repoPath, _ := config.RepoPath(projCfg.Repo)
-					cloneDir := filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
-					copySvc := filecopy.New(h)
-					attrs := map[string]string{
-						semconv.HookAttrProject:      project,
-						semconv.HookAttrBranch:       branch,
-						semconv.HookAttrWorktreePath: result.Path,
-					}
-					if err := copySvc.Copy(projCfg.Files, cloneDir, result.Path, attrs); err != nil {
-						return fmt.Errorf("copying files: %w", err)
-					}
-				}
-
-				// Template processing
-				tmplSvc := herdtemplate.New(h)
-				tmplAttrs := map[string]string{
-					semconv.HookAttrProject:      project,
-					semconv.HookAttrBranch:       branch,
-					semconv.HookAttrWorktreePath: result.Path,
-				}
-				if _, err := tmplSvc.Process(herdtemplate.ProcessContext{
-					Project:      project,
-					Branch:       branch,
-					WorktreePath: result.Path,
-					SessionName:  semconv.SessionName(project, branch),
-				}, tmplAttrs); err != nil {
-					return fmt.Errorf("processing templates: %w", err)
-				}
-			} else {
-				return sessionErr(cmd, err)
-			}
-		}
-
-		name := semconv.SessionName(project, branch)
-		fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
-
-		tc := tmux.NewClient(tmux.NewRealRunner())
-		svc := session.NewService(tc, h)
-		sessionID, err := svc.Start(session.StartRequest{
-			Project: project,
-			Branch:  branch,
-			Path:    path,
-			Cmd:     agent.Command(),
-			Env:     agent.Env,
-			Attach:  sessionStartAttach,
-		})
-		if err != nil {
-			fmt.Fprintln(cmd.OutOrStdout())
-			return sessionErr(cmd, err)
-		}
-
-		fmt.Fprintln(cmd.OutOrStdout(), "done")
-		if !sessionStartAttach {
-			fmt.Fprintf(cmd.OutOrStdout(), "Attach with: ch session attach %s\n", name)
-		}
-
-		if sessionStartAttach {
-			return execTmuxAttach(sessionID)
-		}
-		return nil
-	},
-}
-
-// ── list ─────────────────────────────────────────────────────────────────────
-
-var sessionListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all active sessions",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := newSessionService()
-		sessions, err := svc.List()
-		if err != nil {
-			return fmt.Errorf("listing sessions: %w", err)
-		}
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "SESSION\tSTATUS")
-		for _, s := range sessions {
-			fmt.Fprintf(w, "%s\t%s\n", s.Name, s.Status)
-		}
-		return w.Flush()
-	},
-}
-
-// ── show ─────────────────────────────────────────────────────────────────────
-
-var sessionShowCmd = &cobra.Command{
-	Use:   "show <session>",
-	Short: "Show details for a session",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := newSessionService()
-		info, err := svc.Show(args[0])
-		if err != nil {
-			return sessionErr(cmd, err)
-		}
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		fmt.Fprintf(w, "Session:\t%s\n", info.Name)
-		fmt.Fprintf(w, "Status:\t%s\n", info.Status)
-		if info.Annotation != "" {
-			fmt.Fprintf(w, "Annotation:\t%s\n", info.Annotation)
-		}
-		if !info.StartedAt.IsZero() {
-			fmt.Fprintf(w, "Started:\t%s\n", info.StartedAt.Format("2006-01-02T15:04:05Z"))
-		}
-		return w.Flush()
-	},
-}
-
-// ── attach ───────────────────────────────────────────────────────────────────
-
-var sessionAttachCmd = &cobra.Command{
-	Use:   "attach <session>",
-	Short: "Attach to an existing session",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := newSessionService()
-		info, err := svc.Show(args[0]) // verify it exists
-		if err != nil {
-			return sessionErr(cmd, err)
-		}
-		return execTmuxAttach(info.SessionID) // use stable session_id for attach
-	},
 }
 
 // execTmuxAttach attaches to a tmux session. If already inside tmux, uses
@@ -238,80 +59,305 @@ var lookPath = func(file string) (string, error) {
 	return exec.LookPath(file)
 }
 
-// ── stop ─────────────────────────────────────────────────────────────────────
+// ── list ─────────────────────────────────────────────────────────────────────
 
-var sessionStopForce bool
+type ListSessionCmd struct{}
 
-var sessionStopCmd = &cobra.Command{
-	Use:   "stop <session>",
-	Short: "Stop a session",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
-		svc := newSessionService()
-
-		if !sessionStopForce {
-			info, err := svc.Show(name)
-			if err != nil {
-				return sessionErr(cmd, err)
-			}
-			if info.Status == semconv.StatusRunning {
-				fmt.Fprintf(cmd.OutOrStdout(), "Session %s is running. Stop? [y/N] ", name)
-				scanner := bufio.NewScanner(cmd.InOrStdin())
-				scanner.Scan()
-				if scanner.Text() != "y" && scanner.Text() != "Y" {
-					fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
-					return nil
-				}
-			}
-		}
-
-		fmt.Fprintf(cmd.OutOrStdout(), "Stopping %s...  ", name)
-		if err := svc.Stop(name); err != nil {
-			fmt.Fprintln(cmd.OutOrStdout())
-			return sessionErr(cmd, err)
-		}
-		fmt.Fprintln(cmd.OutOrStdout(), "done")
-		return nil
-	},
+func (c *ListSessionCmd) Cobra() *cobra.Command {
+	return &cobra.Command{
+		Use:     "session",
+		Aliases: []string{"sessions", "ses"},
+		Short:   "List all active sessions",
+		Args:    cobra.NoArgs,
+		RunE:    c.Run,
+	}
 }
 
-// ── error helper ─────────────────────────────────────────────────────────────
-
-func sessionErr(cmd *cobra.Command, err error) error {
-	switch {
-	case errors.Is(err, session.ErrSessionExists):
-		var sesErr *session.SessionExistsError
-		if errors.As(err, &sesErr) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Error: session %s already exists. Attach with 'ch session attach %s'.\n", sesErr.Name, sesErr.Name)
-		} else {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Error: %s\n", err)
-		}
-	case errors.Is(err, session.ErrSessionNotFound):
-		fmt.Fprintf(cmd.ErrOrStderr(), "Error: %s\n", err)
-	case errors.Is(err, session.ErrPathNotFound):
-		fmt.Fprintf(cmd.ErrOrStderr(), "Error: %s\n", err)
-	case errors.Is(err, worktree.ErrNotCloned):
-		fmt.Fprintf(cmd.ErrOrStderr(), "Error: %s\n", err)
-	case errors.Is(err, worktree.ErrWorktreeNotFound):
-		fmt.Fprintf(cmd.ErrOrStderr(), "Error: %s\n", err)
-	default:
-		return err
+func (c *ListSessionCmd) Run(cmd *cobra.Command, _ []string) error {
+	svc := newSessionService()
+	sessions, err := svc.List()
+	if err != nil {
+		return fmt.Errorf("listing sessions: %w", err)
 	}
-	os.Exit(1)
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "SESSION\tTYPE\tSTATUS")
+	for _, s := range sessions {
+		fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, s.Type, s.Status)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flushing output: %w", err)
+	}
 	return nil
 }
 
-func init() {
-	sessionStartCmd.Flags().BoolVar(&sessionStartAttach, "attach", false, "attach to the session after starting")
-	sessionStartCmd.Flags().BoolVar(&sessionStartNoCreate, "no-create", false, "fail if worktree does not exist instead of creating it")
-	sessionStartCmd.Flags().StringVar(&sessionStartAgent, "agent", "", "agent to use for the session")
-	sessionStopCmd.Flags().BoolVar(&sessionStopForce, "force", false, "skip confirmation prompt")
+// ── show ─────────────────────────────────────────────────────────────────────
 
-	sessionCmd.AddCommand(sessionStartCmd)
-	sessionCmd.AddCommand(sessionListCmd)
-	sessionCmd.AddCommand(sessionShowCmd)
-	sessionCmd.AddCommand(sessionAttachCmd)
-	sessionCmd.AddCommand(sessionStopCmd)
-	rootCmd.AddCommand(sessionCmd)
+type ShowSessionCmd struct {
+	Shell bool
+}
+
+func (c *ShowSessionCmd) Cobra() *cobra.Command {
+	cobraCmd := &cobra.Command{
+		Use:     "session <project> <branch>",
+		Aliases: []string{"sessions", "ses"},
+		Short:   "Show details for a session",
+		Args:    cobra.ExactArgs(2),
+		RunE:    c.Run,
+	}
+	cobraCmd.Flags().BoolVar(&c.Shell, "shell", false, "target the shell-type session")
+	return cobraCmd
+}
+
+func (c *ShowSessionCmd) Run(cmd *cobra.Command, args []string) error {
+	project, branch := args[0], args[1]
+	sessionType := sessionTypeFromFlag(c.Shell)
+	svc := newSessionService()
+	info, err := svc.Show(project, branch, sessionType)
+	if err != nil {
+		return sessionErr(cmd, err)
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "Session:\t%s\n", info.Name)
+	fmt.Fprintf(w, "Type:\t%s\n", info.Type)
+	fmt.Fprintf(w, "Status:\t%s\n", info.Status)
+	if info.Annotation != "" {
+		fmt.Fprintf(w, "Annotation:\t%s\n", info.Annotation)
+	}
+	if !info.StartedAt.IsZero() {
+		fmt.Fprintf(w, "Started:\t%s\n", info.StartedAt.Format(time.RFC3339))
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flushing output: %w", err)
+	}
+	return nil
+}
+
+// ── create ───────────────────────────────────────────────────────────────────
+
+type CreateSessionCmd struct {
+	Shell  bool
+	Attach bool
+	Agent  string
+}
+
+func (c *CreateSessionCmd) Cobra() *cobra.Command {
+	cobraCmd := &cobra.Command{
+		Use:     "session <project> <branch>",
+		Aliases: []string{"sessions", "ses"},
+		Short:   "Start a new session in a worktree",
+		Args:    cobra.ExactArgs(2),
+		RunE:    c.Run,
+	}
+	cobraCmd.Flags().BoolVar(&c.Shell, "shell", false, "start a shell-type session instead of an agent session")
+	cobraCmd.Flags().BoolVar(&c.Attach, "attach", false, "attach to the session after starting")
+	cobraCmd.Flags().StringVar(&c.Agent, "agent", "", "agent to use for the session")
+	return cobraCmd
+}
+
+func (c *CreateSessionCmd) Run(cmd *cobra.Command, args []string) error {
+	project, branch := args[0], args[1]
+
+	sessionType := sessionTypeFromFlag(c.Shell)
+
+	var sessionCmd string
+	var sessionEnv map[string]string
+
+	if c.Shell {
+		sessionCmd = os.Getenv("SHELL")
+		if sessionCmd == "" {
+			sessionCmd = "/bin/sh"
+		}
+		sessionEnv = nil
+	} else {
+		flagAgent := ""
+		if cmd.Flags().Changed("agent") {
+			flagAgent = c.Agent
+		}
+		agentName, err := resolveAgentName(flagAgent)
+		if err != nil {
+			return err
+		}
+		agent, err := cfg.AgentByName(agentName)
+		if err != nil {
+			return fmt.Errorf("resolving agent: %w", err)
+		}
+		sessionCmd = agent.Command()
+		sessionEnv = agent.Env
+	}
+
+	projCfg := cfg.Projects[project]
+	h := hooks.New(projCfg.Hooks)
+
+	wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), h)
+	path, err := wtSvc.WorktreePath(project, branch)
+	if err != nil {
+		if errors.Is(err, worktree.ErrWorktreeNotFound) {
+			fmt.Fprintf(cmd.OutOrStdout(), "Worktree %s/%s not found, creating...  ", project, branch)
+			result, createErr := wtSvc.New(project, branch)
+			if createErr != nil {
+				fmt.Fprintln(cmd.OutOrStdout())
+				return worktreeErr(cmd, project, branch, createErr)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "done")
+			path = result.Path
+
+			// File copy
+			if len(projCfg.Files) > 0 {
+				repoPath, _ := config.RepoPath(projCfg.Repo)
+				cloneDir := filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
+				copySvc := filecopy.New(h)
+				attrs := map[string]string{
+					semconv.HookAttrProject:      project,
+					semconv.HookAttrBranch:       branch,
+					semconv.HookAttrWorktreePath: result.Path,
+				}
+				if err := copySvc.Copy(projCfg.Files, cloneDir, result.Path, attrs); err != nil {
+					return fmt.Errorf("copying files: %w", err)
+				}
+			}
+
+			// Template processing
+			tmplSvc := herdtemplate.New(h)
+			tmplAttrs := map[string]string{
+				semconv.HookAttrProject:      project,
+				semconv.HookAttrBranch:       branch,
+				semconv.HookAttrWorktreePath: result.Path,
+			}
+			if _, err := tmplSvc.Process(herdtemplate.ProcessContext{
+				Project:      project,
+				Branch:       branch,
+				WorktreePath: result.Path,
+				SessionName:  semconv.SessionName(project, branch),
+			}, tmplAttrs); err != nil {
+				return fmt.Errorf("processing templates: %w", err)
+			}
+		} else {
+			return sessionErr(cmd, err)
+		}
+	}
+
+	name := semconv.SessionName(project, branch)
+	if sessionType == semconv.SessionTypeShell {
+		name = semconv.ShellSessionName(project, branch)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
+
+	tc := tmux.NewClient(tmux.NewRealRunner())
+	svc := session.NewService(tc, h)
+	sessionID, err := svc.Start(session.StartRequest{
+		Project: project,
+		Branch:  branch,
+		Path:    path,
+		Type:    sessionType,
+		Cmd:     sessionCmd,
+		Env:     sessionEnv,
+		Attach:  c.Attach,
+	})
+	if err != nil {
+		fmt.Fprintln(cmd.OutOrStdout())
+		return sessionErr(cmd, err)
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), "done")
+	if !c.Attach {
+		shellSuffix := ""
+		if c.Shell {
+			shellSuffix = " --shell"
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Attach with: ch attach session %s %s%s\n", project, branch, shellSuffix)
+	}
+
+	if c.Attach {
+		return execTmuxAttach(sessionID)
+	}
+	return nil
+}
+
+// ── delete ───────────────────────────────────────────────────────────────────
+
+type DeleteSessionCmd struct {
+	Shell bool
+	Force bool
+}
+
+func (c *DeleteSessionCmd) Cobra() *cobra.Command {
+	cobraCmd := &cobra.Command{
+		Use:     "session <project> <branch>",
+		Aliases: []string{"sessions", "ses"},
+		Short:   "Stop a session",
+		Args:    cobra.ExactArgs(2),
+		RunE:    c.Run,
+	}
+	cobraCmd.Flags().BoolVar(&c.Shell, "shell", false, "target the shell-type session")
+	cobraCmd.Flags().BoolVar(&c.Force, "force", false, "skip confirmation prompt")
+	return cobraCmd
+}
+
+func (c *DeleteSessionCmd) Run(cmd *cobra.Command, args []string) error {
+	project, branch := args[0], args[1]
+	sessionType := sessionTypeFromFlag(c.Shell)
+	svc := newSessionService()
+
+	if !c.Force {
+		info, err := svc.Show(project, branch, sessionType)
+		if err != nil {
+			return sessionErr(cmd, err)
+		}
+		if info.Status == semconv.StatusRunning {
+			fmt.Fprintf(cmd.OutOrStdout(), "Delete session %s/%s (%s)? [y/N] ", project, branch, sessionType)
+			scanner := bufio.NewScanner(cmd.InOrStdin())
+			scanner.Scan()
+			if scanner.Text() != "y" && scanner.Text() != "Y" {
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+				return nil
+			}
+		}
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Stopping %s/%s...  ", project, branch)
+	if err := svc.Stop(project, branch, sessionType); err != nil {
+		fmt.Fprintln(cmd.OutOrStdout())
+		return sessionErr(cmd, err)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "done")
+	return nil
+}
+
+// ── attach ───────────────────────────────────────────────────────────────────
+
+type AttachSessionCmd struct {
+	Shell bool
+}
+
+func (c *AttachSessionCmd) Cobra() *cobra.Command {
+	cobraCmd := &cobra.Command{
+		Use:     "session <project> <branch>",
+		Aliases: []string{"sessions", "ses"},
+		Short:   "Attach to an existing session",
+		Args:    cobra.ExactArgs(2),
+		RunE:    c.Run,
+	}
+	cobraCmd.Flags().BoolVar(&c.Shell, "shell", false, "target the shell-type session")
+	return cobraCmd
+}
+
+func (c *AttachSessionCmd) Run(cmd *cobra.Command, args []string) error {
+	project, branch := args[0], args[1]
+	sessionType := sessionTypeFromFlag(c.Shell)
+	svc := newSessionService()
+	info, err := svc.Show(project, branch, sessionType)
+	if err != nil {
+		return sessionErr(cmd, err)
+	}
+	return execTmuxAttach(info.SessionID)
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+// sessionTypeFromFlag maps the --shell flag to a session type constant.
+func sessionTypeFromFlag(shell bool) string {
+	if shell {
+		return semconv.SessionTypeShell
+	}
+	return semconv.SessionTypeAgent
 }

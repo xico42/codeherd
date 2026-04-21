@@ -29,82 +29,51 @@ repo = "git@github.com:user/myapp.git"
 	return cfgPath
 }
 
-func TestSessionCmd_help(t *testing.T) {
-	if err := runCmd(t, "session", "--help"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestSessionList_empty(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
 	// list should succeed even with no tmux (service handles errors)
 	// May fail if tmux not available — that's acceptable in unit tests.
-	_ = runCmd(t, "--config", cfgPath, "session", "list")
+	_ = runCmd(t, "--config", cfgPath, "list", "session")
 }
 
-func TestSessionStart_tooFewArgs(t *testing.T) {
+func TestCreateSession_tooFewArgs(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
-	if err := runCmd(t, "--config", cfgPath, "session", "start", "myapp"); err == nil {
+	if err := runCmd(t, "--config", cfgPath, "create", "session", "myapp"); err == nil {
 		t.Error("expected error for missing branch argument")
 	}
 }
 
-func TestSessionStart_tooManyArgs(t *testing.T) {
+func TestCreateSession_tooManyArgs(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
-	if err := runCmd(t, "--config", cfgPath, "session", "start", "a", "b", "c"); err == nil {
+	if err := runCmd(t, "--config", cfgPath, "create", "session", "a", "b", "c"); err == nil {
 		t.Error("expected error for too many arguments")
 	}
 }
 
-func TestSessionAttach_tooFewArgs(t *testing.T) {
+func TestAttachSession_tooFewArgs(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
-	if err := runCmd(t, "--config", cfgPath, "session", "attach"); err == nil {
+	if err := runCmd(t, "--config", cfgPath, "attach", "session"); err == nil {
 		t.Error("expected error for missing session argument")
 	}
 }
 
-func TestSessionStop_tooFewArgs(t *testing.T) {
+func TestDeleteSession_tooFewArgs(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
-	if err := runCmd(t, "--config", cfgPath, "session", "stop"); err == nil {
+	if err := runCmd(t, "--config", cfgPath, "delete", "session"); err == nil {
 		t.Error("expected error for missing session argument")
 	}
 }
 
-func TestSessionShow_tooFewArgs(t *testing.T) {
+func TestShowSession_tooFewArgs(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
-	if err := runCmd(t, "--config", cfgPath, "session", "show"); err == nil {
+	if err := runCmd(t, "--config", cfgPath, "show", "session"); err == nil {
 		t.Error("expected error for missing session argument")
 	}
 }
 
-// TestSessionStart_noCreateFlag_recognized verifies --no-create is a known flag.
-// Before the flag is wired, Cobra returns "unknown flag: --no-create".
-// After wiring, the command proceeds past flag parsing and fails on the
-// unconfigured project (non-sentinel error returned, not os.Exit(1)).
-func TestSessionStart_noCreateFlag_recognized(t *testing.T) {
+func TestCreateSession_agentFlag_recognized(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
-	err := runCmd(t, "--config", cfgPath, "session", "start", "--no-create", "notaproject", "main")
-	if err == nil {
-		t.Fatal("expected error for unconfigured project, got nil")
-	}
-	if strings.Contains(err.Error(), "unknown flag") {
-		t.Fatalf("--no-create flag not recognised: %v", err)
-	}
-}
-
-func TestSessionStart_unconfiguredProject(t *testing.T) {
-	cfgPath := writeSessionConfig(t, t.TempDir())
-	// unconfigured project returns a non-sentinel error from worktree service,
-	// which exercises the sessionErr default branch (returns error, no os.Exit).
-	err := runCmd(t, "--config", cfgPath, "session", "start", "notaproject", "main")
-	if err == nil {
-		t.Error("expected error for unconfigured project, got nil")
-	}
-}
-
-func TestSessionStart_agentFlag_recognized(t *testing.T) {
-	cfgPath := writeSessionConfig(t, t.TempDir())
-	err := runCmd(t, "--config", cfgPath, "session", "start", "--agent", "echo-agent", "notaproject", "main")
+	err := runCmd(t, "--config", cfgPath, "create", "session", "--agent", "echo-agent", "notaproject", "main")
 	if err == nil {
 		t.Fatal("expected error for unconfigured project, got nil")
 	}
@@ -113,7 +82,17 @@ func TestSessionStart_agentFlag_recognized(t *testing.T) {
 	}
 }
 
-func TestSessionStart_noAgentConfigured_errors(t *testing.T) {
+func TestCreateSession_unconfiguredProject(t *testing.T) {
+	cfgPath := writeSessionConfig(t, t.TempDir())
+	// unconfigured project returns a non-sentinel error from worktree service,
+	// which exercises the sessionErr default branch (returns error, no os.Exit).
+	err := runCmd(t, "--config", cfgPath, "create", "session", "notaproject", "main")
+	if err == nil {
+		t.Error("expected error for unconfigured project, got nil")
+	}
+}
+
+func TestCreateSession_noAgentConfigured_errors(t *testing.T) {
 	cfgDir := t.TempDir()
 	cfgPath := filepath.Join(cfgDir, "config.toml")
 	content := `[defaults]
@@ -125,11 +104,28 @@ repo = "git@github.com:user/myapp.git"
 	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := runCmd(t, "--config", cfgPath, "session", "start", "myapp", "main")
+	err := runCmd(t, "--config", cfgPath, "create", "session", "myapp", "main")
 	if err == nil {
 		t.Fatal("expected error when no agent configured")
 	}
 	if !strings.Contains(err.Error(), "no agent specified") {
 		t.Errorf("error = %q, want to contain 'no agent specified'", err.Error())
+	}
+}
+
+func TestCreateSession_shellFlag_recognized(t *testing.T) {
+	cfgPath := writeSessionConfig(t, t.TempDir())
+	err := runCmd(t, "--config", cfgPath, "create", "session", "--shell", "notaproject", "main")
+	if err == nil {
+		t.Fatal("expected error for unconfigured project, got nil")
+	}
+	if strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("--shell flag not recognised: %v", err)
+	}
+}
+
+func TestDeleteSession_helpShowsFlags(t *testing.T) {
+	if err := runCmd(t, "delete", "session", "--help"); err != nil {
+		t.Fatalf("delete session --help: %v", err)
 	}
 }

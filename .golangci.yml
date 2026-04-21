@@ -1,21 +1,40 @@
+version: "2"
 linters:
   enable:
-    - errcheck
-    - govet
-    - staticcheck
-    - unused
-    - goimports
-    - misspell
     - gosec
+    - misspell
     - wrapcheck
-
-linters-settings:
-  goimports:
-    local-prefixes: github.com/xico42/codeherd
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - wrapcheck
-        - gosec
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -QF*
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - gosec
+          - wrapcheck
+        path: _test\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/xico42/codeherd
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

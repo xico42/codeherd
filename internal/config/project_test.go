@@ -99,3 +99,22 @@ func TestRepoPath_EmptyPathAfterHost(t *testing.T) {
 		t.Fatal("RepoPath() = nil, want error for empty path")
 	}
 }
+
+// TestRepoPath_NoHost exercises the "no host" error branch for an https URL
+// that parses successfully but has no host component.
+func TestRepoPath_NoHost(t *testing.T) {
+	// A URL with a scheme but no host (e.g. "https:///path/to/repo").
+	_, err := config.RepoPath("https:///path/to/repo")
+	if err == nil {
+		t.Fatal("RepoPath() = nil, want error for URL with no host")
+	}
+}
+
+// TestRepoPath_ParseError exercises the url.Parse error branch.
+func TestRepoPath_ParseError(t *testing.T) {
+	// "://foo" triggers a parse error because it lacks a protocol scheme.
+	_, err := config.RepoPath("://foo")
+	if err == nil {
+		t.Fatal("RepoPath() = nil, want error for unparseable URL")
+	}
+}

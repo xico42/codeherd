@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	tea "charm.land/bubbletea/v2"
@@ -210,16 +211,29 @@ func (m Model) shellAction() tea.Cmd {
 			return attachMsg{session: shellSessionID}
 		}
 
-		shellName := semconv.ShellSessionName(project, branch)
-		sessionName := semconv.SessionName(project, branch)
+		shellCmd := os.Getenv("SHELL")
+		if shellCmd == "" {
+			shellCmd = "/bin/sh"
+		}
 
-		if err := tmuxClient.NewSession(shellName, path); err != nil {
+		// Construct a project-bound hook. The existing group-3 branch above
+		// may have already done this (shadowing `h`), but the worktree-item
+		// path does not — so always resolve from cfg here.
+		projCfg := cfg.Projects[project]
+		h := hooks.New(projCfg.Hooks)
+
+		sesSvc := session.NewService(tmuxClient, h)
+		sessionID, err := sesSvc.Start(session.StartRequest{
+			Project: project,
+			Branch:  branch,
+			Path:    path,
+			Type:    semconv.SessionTypeShell,
+			Cmd:     shellCmd,
+		})
+		if err != nil {
 			return errMsg{err: err}
 		}
-		_ = tmuxClient.SetOption(shellName, semconv.TmuxOptionCanonicalName, sessionName)
-		_ = tmuxClient.SetOption(shellName, semconv.TmuxOptionSessionType, semconv.SessionTypeShell)
-
-		return attachMsg{session: shellName}
+		return attachMsg{session: sessionID}
 	}
 }
 
@@ -303,12 +317,11 @@ func (m Model) confirmDeleteAll() (tea.Model, tea.Cmd) {
 	tmuxClient := m.tmuxClient
 	project := target.Project
 	branch := target.Branch
-	canonicalName := semconv.SessionName(project, branch)
 	shellID := target.ShellSessionID
 
 	return m, func() tea.Msg {
 		if target.AgentSessionID != "" {
-			_ = sesSvc.Stop(canonicalName)
+			_ = sesSvc.Stop(project, branch, semconv.SessionTypeAgent)
 		}
 
 		if shellID != "" {
@@ -333,11 +346,12 @@ func (m Model) confirmDeleteAgent() (tea.Model, tea.Cmd) {
 	m.screen = screenList
 
 	sesSvc := m.sesSvc
-	canonicalName := semconv.SessionName(target.Project, target.Branch)
+	project := target.Project
+	branch := target.Branch
 
 	return m, func() tea.Msg {
 		if target.AgentSessionID != "" {
-			_ = sesSvc.Stop(canonicalName)
+			_ = sesSvc.Stop(project, branch, semconv.SessionTypeAgent)
 		}
 		return m.refreshCmd()()
 	}

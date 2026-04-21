@@ -204,6 +204,27 @@ func TestProcess_BadTemplate(t *testing.T) {
 	}
 }
 
+// TestProcess_ExecuteError exercises the template execution error path.
+// {{ call .Project }} parses fine but fails at execution because Project is a
+// string, not a function.
+func TestProcess_ExecuteError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bad_exec.herd"), []byte(`{{ call .Project }}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	_, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "main",
+		WorktreePath: dir,
+		SessionName:  "myapp-main",
+	}, nil)
+	if err == nil {
+		t.Error("expected error for template execution failure")
+	}
+}
+
 type mockHook struct {
 	calls  []hookCall
 	failOn string

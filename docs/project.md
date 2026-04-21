@@ -24,7 +24,7 @@ The article runs six Claude Code agents in parallel on an ephemeral cloud VM, us
 
 ### Primitives first
 
-`codeherd` is built **primitives-first**. The core commands (`project`, `worktree`, `session`, `config`) are independent, composable building blocks. Each is useful on its own and testable in isolation.
+`codeherd` is built **primitives-first**. The core commands (`project`, `worktree`, `session`) are independent, composable building blocks. Each is useful on its own and testable in isolation.
 
 Higher-level automation (e.g., a single `ch setup` command that clones a project, creates a worktree, generates the environment, and starts a session) will be built **on top of** these primitives, not instead of them. This layering is intentional:
 
@@ -56,13 +56,11 @@ args = ["--model", "opus"]
 
 This decouples the session lifecycle from any specific agent. The same worktree can host a Claude session today and an Aider session tomorrow. Agent selection happens at runtime via `--agent` flag or TUI picker.
 
-### Local-first, remote-capable
+### Local-first
 
 All session management commands execute **directly on the machine where codeherd is invoked** — git, tmux, and filesystem operations run locally with no SSH indirection.
 
 This means codeherd works on any machine: a laptop, a cloud VM, a remote server. The same commands, same config structure, same behavior everywhere.
-
-Remote execution (spinning up ephemeral DO droplets and running sessions there) is a planned capability that extends this model. The session primitives stay the same; only the execution target changes.
 
 ---
 
@@ -73,9 +71,8 @@ Remote execution (spinning up ephemeral DO droplets and running sessions there) 
 3. **Deterministic environment setup** — `.herd` template processing with hash-based port allocation (`port "name"`) eliminates conflicts across parallel sessions.
 4. **Automatic project bootstrapping** — clone, create worktree, generate environment, start session — composable primitives that chain into one-step setup.
 5. **Agent-agnostic** — any CLI tool can be a named agent. codeherd manages the session container, not the agent.
-6. **TUI for fleet overview** — visual dashboard showing all sessions, their status, and quick actions (attach, start, stop).
+6. **TUI for fleet overview** — visual dashboard showing all sessions, their status, and quick actions (attach, create, stop).
 7. **Self-contained binary** — a single Go binary with no runtime dependencies beyond git and tmux.
-8. **Remote execution (future)** — same interface on ephemeral DO droplets when local resources are insufficient.
 
 ---
 
@@ -99,10 +96,6 @@ Run multiple AI coding agents in parallel, each in its own tmux session with an 
 
 Work across multiple projects simultaneously. Each project has its own directory layout, worktrees, and sessions. The TUI groups everything by project for quick navigation.
 
-### Secondary: Offloading to remote compute (future)
-
-When local resources are insufficient for the number of parallel agents needed, spin up an ephemeral DO droplet and run the same sessions there. Same interface, same config, same workflow — just more compute.
-
 ### Secondary: Isolated experiments
 
 Create a worktree for a throwaway branch, start an agent session, let it work, review the results, delete everything. The worktree isolation means experiments never touch the main checkout.
@@ -118,25 +111,29 @@ Create a worktree for a throwaway branch, start an agent session, let it work, r
 | Language | Go 1.26 |
 | CLI framework | [Cobra](https://github.com/spf13/cobra) |
 | TUI | [Bubble Tea v2](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) |
-| DO API client (future) | [godo](https://github.com/digitalocean/godo) — Digital Ocean's official Go client |
-| Provisioning (future) | cloud-init (user-data YAML) |
 | Config format | TOML |
 | Linter | golangci-lint |
 
 ### Command structure
 
+Commands follow a `ch <verb> <subject>` grammar. The verb expresses the action; the subject narrows it to a resource type.
+
 | Command | Description | Status |
 |---|---|---|
-| `ch config` | Manage configuration (init, show, set, get) | Done |
-| `ch project` | Manage project clones (list, show, clone) | Done |
-| `ch worktree` | Manage git worktrees (list, new, delete, shell, env) | Done |
-| `ch session` | Manage tmux sessions (start, list, attach, stop, show) | Done |
-| `ch tui` | Interactive dashboard | Done |
+| `ch` | Launch the TUI dashboard | Done |
+| `ch list project` | List configured projects | Done |
+| `ch show project <name>` | Show project details | Done |
+| `ch clone project <name>` | Clone a project | Done |
+| `ch list worktree` | List all worktrees | Done |
+| `ch create worktree <project> <branch>` | Create a worktree | Done |
+| `ch delete worktree <project> <branch>` | Delete a worktree | Done |
+| `ch list session` | List active sessions | Done |
+| `ch create session <project> <branch>` | Start an agent session (or `--shell` for a plain shell) | Done |
+| `ch attach session <project> <branch>` | Attach to a session | Done |
+| `ch show session <project> <branch>` | Show session details | Done |
+| `ch delete session <project> <branch>` | Stop a session | Done |
+| `ch template [dir]` | Process `.herd` template files | Done |
 | `ch setup` | One-command project bootstrapping | Planned |
-| `ch up` | Create remote droplet | Planned (remote phase) |
-| `ch down` | Destroy remote droplet | Planned (remote phase) |
-| `ch status` | Show remote droplet status | Planned (remote phase) |
-| `ch ssh` | Connect to remote droplet | Planned (remote phase) |
 
 ### tmux session architecture
 
@@ -162,7 +159,6 @@ Navigation uses tmux's built-in session switching:
 | Purpose | Path |
 |---|---|
 | CLI config | `~/.config/codeherd/config.toml` |
-| Droplet state (future) | `~/.local/share/codeherd/state.json` |
 | Binary | `~/.local/bin/ch` |
 
 ### `~/.config/codeherd/config.toml` structure
@@ -191,18 +187,6 @@ default_branch = "main"
 [projects.api]
 repo = "git@github.com:user/api.git"
 default_branch = "develop"
-
-# Future: remote execution config
-# [defaults]
-# token = "..."                  # DO API token
-# ssh_key_id = "..."             # DO SSH key ID
-# region = "nyc3"
-# size = "s-2vcpu-4gb"
-# tailscale_auth_key = "..."
-#
-# [profiles.heavy]
-# size = "s-8vcpu-16gb"
-# region = "sfo3"
 ```
 
 ### Project directory layout
@@ -238,17 +222,16 @@ codeherd/
 ├── .golangci.yml
 │
 ├── cmd/
-│   ├── root.go          — cobra root, persistent flags, config load
-│   ├── config.go        — manage config
-│   ├── project.go       — manage project clones
-│   ├── worktree.go      — manage git worktrees
-│   ├── session.go       — manage tmux sessions
-│   ├── tui.go           — interactive dashboard
-│   ├── up.go            — (future) create remote droplet
-│   ├── down.go          — (future) destroy remote droplet
-│   ├── status.go        — (future) show remote droplet status
-│   ├── ssh.go           — (future) connect to remote droplet
-│   └── notify.go        — (future) notification management
+│   ├── root.go          — cobra root, persistent flags, config load, TUI launch
+│   ├── register.go      — wires verb commands (list, create, delete, show, clone, attach) to their subjects
+│   ├── services.go      — shared service constructors
+│   ├── errors.go        — shared error helpers
+│   ├── project.go       — project subcommands (list, show, clone)
+│   ├── worktree.go      — worktree subcommands (list, create, delete)
+│   ├── session.go       — session subcommands (list, create, attach, show, delete)
+│   ├── tui.go           — TUI launch helpers
+│   ├── template.go      — template subcommand
+│   └── plugin.go        — plugin subcommand
 │
 ├── internal/
 │   ├── config/          — TOML config: defaults, agents, projects; RepoPath() URL→path derivation
@@ -258,12 +241,7 @@ codeherd/
 │   ├── tmux/            — typed tmux command wrapper
 │   ├── tui/             — Bubble Tea v2 dashboard
 │   ├── herdtemplate/    — .herd template processing: deterministic ports, env var interpolation
-│   ├── semconv/         — semantic conventions (session naming, path conventions)
-│   ├── state/           — JSON state (droplet state for future remote phase)
-│   ├── do/              — godo wrapper (future remote phase)
-│   └── provision/       — cloud-init template rendering (future remote phase)
-│       └── templates/
-│           └── user-data.yaml.tmpl
+│   └── semconv/         — semantic conventions (session naming, path conventions)
 │
 └── docs/
     ├── project.md
@@ -277,11 +255,11 @@ codeherd/
 ### What's done
 
 - [x] Internal packages: config, project, worktree, session, tmux, herdtemplate, tui, semconv
-- [x] `ch config` — init, show, set, get
-- [x] `ch project` — list, show, clone
-- [x] `ch worktree` — list, new, delete, shell, env
-- [x] `ch session` — start, list, attach, stop, show, with named agent support
-- [x] `ch tui` — Bubble Tea v2 dashboard with session/worktree/project views
+- [x] `ch list/show/clone project` — project management
+- [x] `ch list/create/delete worktree` — worktree management
+- [x] `ch list/create/attach/show/delete session` — session management with named agent support and unified agent/shell sessions
+- [x] `ch template` — ad-hoc `.herd` template processing
+- [x] `ch` (no subcommand) — Bubble Tea v2 dashboard with session/worktree/project views
 - [x] Named agent configurations (`[agents.<name>]`)
 - [x] Session state via tmux user-defined options (no file-based state)
 - [x] Automatic worktree creation on session start
@@ -291,22 +269,11 @@ codeherd/
 - [ ] `ch setup` — one-command project bootstrapping: clone + worktree + env + session
 - [ ] `.herd` template integration into session start (auto-render `.herd` files before launching agent)
 
-### Future: Remote execution
-
-- [ ] `ch up` — create ephemeral DO droplet via cloud-init
-- [ ] `ch down` — destroy droplet and clean up
-- [ ] `ch status` — show droplet status and cost
-- [ ] `ch ssh` — connect to droplet (SSH or Mosh)
-- [ ] Remote session management — start/stop/attach sessions on a remote host
-- [ ] Cloud-init provisioning (Docker, mise, Tailscale, tmux, codeherd binary, agent tools)
-- [ ] `ch stop` / `ch start` — halt/resume droplet without destroying
-
 ### Future: Quality of life
 
-- [ ] `ch snapshot` — save/restore droplet snapshots
-- [ ] Multi-environment support (`ch list`, named environments)
-- [ ] Cost guard / auto-shutdown for remote droplets
 - [ ] Desktop notifications when a session needs attention
+- [ ] Session groups / batch operations (start/stop all sessions for a project)
+- [ ] Agent health monitoring (detect stuck agents, auto-restart, resource usage alerts)
 
 ---
 
@@ -316,7 +283,7 @@ When starting a new agent session to continue development on this project, provi
 
 1. **Go + Cobra** for the CLI
 2. **Bubble Tea v2** for the TUI (not v1)
-3. **XDG-compliant** file locations (config in `~/.config`, state in `~/.local/share`)
+3. **XDG-compliant** file locations (config in `~/.config`)
 4. **Go version**: 1.26 (managed via mise)
 5. **Binary install location**: `~/.local/bin/ch`
 6. **All session commands run locally** — no SSH indirection for project/worktree/session
@@ -326,10 +293,7 @@ When starting a new agent session to continue development on this project, provi
 10. **Named agents** — `[agents.<name>]` in config, selected via `--agent` flag or TUI picker
 11. **Session state stored in tmux** — user-defined options on tmux sessions, no state files
 12. **Agent-agnostic** — codeherd manages the session container, agents are pluggable
-13. **Digital Ocean** as the cloud provider for the remote execution phase
-14. **godo** for DO API access (not doctl CLI)
-15. **cloud-init** for droplet provisioning (not Ansible, not remote scripts)
-16. **Tailscale** for remote networking (no public SSH port)
+13. **`ch <verb> <subject>` command grammar** — verb is the action (list, create, delete, show, clone, attach), subject is the resource type (project, worktree, session)
 
 ---
 
@@ -339,7 +303,6 @@ Ideas and features that came up during development but were intentionally deferr
 
 | Idea | Context | Notes |
 |---|---|---|
-| `ch config project add <name>` wizard | Came up during `config` command design | Interactive prompts for repo URL + default branch; alternative to `config set projects.<name>.repo ...` + `config set projects.<name>.default_branch ...`; no API calls needed |
 | Session groups / batch operations | Natural extension of project-awareness | Start/stop all sessions for a project; "refresh all worktrees" |
 | Agent health monitoring | TUI enhancement | Detect stuck agents, auto-restart, resource usage alerts |
 | Template-based project setup | Extension of `.herd` templates | Per-project setup scripts that run after worktree creation (install deps, build, etc.) |

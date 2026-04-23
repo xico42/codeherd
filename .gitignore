@@ -4,6 +4,7 @@ ch
 *.toml.local
 vendor/
 *.out
+/tmp/
 
 # Per-user/tool state
 .serena/

@@ -80,7 +80,7 @@ func (c *TemplateCmd) Run(cmd *cobra.Command, args []string) error {
 		Project:      project,
 		Branch:       branch,
 		WorktreePath: absDir,
-		SessionName:  semconv.SessionName(project, branch),
+		SessionName:  semconv.SessionName("", project, branch),
 		DryRun:       c.DryRun,
 	}, map[string]string{
 		semconv.HookAttrProject:      project,

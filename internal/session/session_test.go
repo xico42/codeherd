@@ -4,12 +4,32 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/session"
 	"github.com/xico42/codeherd/internal/tmux"
 )
+
+// findCall reports whether any recorded tmux invocation contains all
+// the given substrings in order.
+func findCall(calls [][]string, want ...string) bool {
+	for _, c := range calls {
+		joined := strings.Join(c, " ")
+		ok := true
+		for _, w := range want {
+			if !strings.Contains(joined, w) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
 
 // mockRunner implements tmux.Runner for testing.
 type mockRunner struct {
@@ -766,5 +786,131 @@ func TestService_Show_ShellType(t *testing.T) {
 	// Agent-type Show must return ErrSessionNotFound for shell-only session.
 	if _, err := svc.Show("app", "main", semconv.SessionTypeAgent); !errors.Is(err, session.ErrSessionNotFound) {
 		t.Fatalf("agent Show for shell-only session: want ErrSessionNotFound, got %v", err)
+	}
+}
+
+func TestStart_writesProfileOption_whenSet(t *testing.T) {
+	// Same response shape as TestStart_OK, plus one extra set-option
+	// for @codeherd_profile. 8 responses now instead of 7.
+	r2 := &mockRunnerSequence{responses: []mockResponse{
+		{exitCode: 1},                 // list-sessions → no sessions
+		{exitCode: 0},                 // new-session
+		{exitCode: 0},                 // set-option status
+		{exitCode: 0},                 // set-option started_at
+		{exitCode: 0},                 // set-option canonical_name
+		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0},                 // set-option @codeherd_profile (new)
+		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
+	}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc, &mockHook{})
+
+	_, err := svc.Start(session.StartRequest{
+		Project: "myapp",
+		Branch:  "feature",
+		Path:    t.TempDir(),
+		Cmd:     "claude",
+		Profile: "work",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if !findCall(r2.calls, "new-session", "-s", "work-myapp-feature") {
+		t.Errorf("expected new-session on work-myapp-feature; got %v", r2.calls)
+	}
+	if !findCall(r2.calls, "set-option", "work-myapp-feature", semconv.TmuxOptionProfile, "work") {
+		t.Errorf("expected set-option @codeherd_profile work; got %v", r2.calls)
+	}
+}
+
+func TestStart_emptyProfile_noProfileOptionWritten(t *testing.T) {
+	// 7 responses — no extra @codeherd_profile set-option.
+	r2 := &mockRunnerSequence{responses: []mockResponse{
+		{exitCode: 1},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0, stdout: "$1\n"},
+	}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc, &mockHook{})
+
+	_, err := svc.Start(session.StartRequest{
+		Project: "myapp",
+		Branch:  "feature",
+		Path:    t.TempDir(),
+		Cmd:     "claude",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if !findCall(r2.calls, "new-session", "-s", "myapp-feature") {
+		t.Errorf("expected new-session on myapp-feature (no prefix); got %v", r2.calls)
+	}
+	for _, c := range r2.calls {
+		joined := strings.Join(c, " ")
+		if strings.Contains(joined, "set-option") && strings.Contains(joined, semconv.TmuxOptionProfile) {
+			t.Errorf("unexpected set-option @codeherd_profile call: %v", c)
+		}
+	}
+}
+
+func TestList_populatesProfile(t *testing.T) {
+	line := "$1\twork-a-main\twork-a-main\tagent\trunning\t\t\twork\n"
+	r2 := &mockRunnerSequence{responses: []mockResponse{{exitCode: 0, stdout: line}}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc, &mockHook{})
+
+	list, err := svc.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(list) != 1 || list[0].Profile != "work" {
+		t.Errorf("List() = %+v, want one SessionInfo with Profile=work", list)
+	}
+}
+
+func TestShowByName_findsByNameAndType(t *testing.T) {
+	line := "$1\twork-a-main\twork-a-main\tagent\trunning\t\t\twork\n"
+	r2 := &mockRunnerSequence{responses: []mockResponse{{exitCode: 0, stdout: line}}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc, &mockHook{})
+
+	info, err := svc.ShowByName("work-a-main", semconv.SessionTypeAgent)
+	if err != nil {
+		t.Fatalf("ShowByName() error = %v", err)
+	}
+	if info == nil || info.Profile != "work" {
+		t.Errorf("ShowByName() = %+v, want Profile=work", info)
+	}
+}
+
+func TestShowByName_notFound(t *testing.T) {
+	r2 := &mockRunnerSequence{responses: []mockResponse{{exitCode: 1}}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc, &mockHook{})
+
+	_, err := svc.ShowByName("nope", semconv.SessionTypeAgent)
+	if err == nil || !errors.Is(err, session.ErrSessionNotFound) {
+		t.Errorf("ShowByName() error = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestStopByName_killsCorrectSession(t *testing.T) {
+	line := "$1\twork-a-main\twork-a-main\tagent\trunning\t\t\twork\n"
+	r2 := &mockRunnerSequence{responses: []mockResponse{
+		{exitCode: 0, stdout: line}, // list-sessions
+		{exitCode: 0},               // kill-session
+	}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc, &mockHook{})
+
+	if err := svc.StopByName("work-a-main", semconv.SessionTypeAgent); err != nil {
+		t.Fatalf("StopByName() error = %v", err)
+	}
+	if !findCall(r2.calls, "kill-session", "-t", "work-a-main") {
+		t.Errorf("expected kill-session on work-a-main; got %v", r2.calls)
 	}
 }

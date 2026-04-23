@@ -11,9 +11,11 @@ import (
 )
 
 var (
-	cfgFile string
-	noTmux  bool
-	cfg     *config.Config
+	cfgFile     string
+	noTmux      bool
+	profileFlag string
+	cfg         *config.Config
+	registry    *config.ProfileRegistry
 )
 
 var rootCmd = &cobra.Command{
@@ -32,7 +34,7 @@ It is like a shepherd, but for coding agents :).
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		var err error
-		cfg, err = config.Load(cfgFile)
+		cfg, registry, err = config.Load(cfgFile, profileFlag)
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
 		}
@@ -45,6 +47,7 @@ func init() {
 	rootCmd.SilenceUsage = true
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/.config/codeherd/config.toml)")
+	rootCmd.PersistentFlags().StringVarP(&profileFlag, "profile", "p", "", "profile to load (when profiles_enabled=true)")
 	rootCmd.Flags().BoolVar(&noTmux, "no-tmux", false, "run TUI directly without tmux wrapping")
 
 	registerCommands(rootCmd)

@@ -128,7 +128,7 @@ func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 		Project:      project,
 		Branch:       branch,
 		WorktreePath: result.Path,
-		SessionName:  semconv.SessionName(project, branch),
+		SessionName:  semconv.SessionName("", project, branch),
 	}, tmplAttrs); err != nil {
 		return fmt.Errorf("processing templates: %w", err)
 	}
@@ -150,7 +150,7 @@ func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("resolving agent: %w", err)
 		}
 
-		name := semconv.SessionName(project, branch)
+		name := semconv.SessionName("", project, branch)
 		fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
 
 		sesSvc := session.NewService(tmux.NewClient(tmux.NewRealRunner()), h)

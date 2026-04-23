@@ -19,3 +19,22 @@ func TestKeyMap_ShortHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestKeys_profileCycleBindings(t *testing.T) {
+	k := defaultKeyMap()
+	if len(k.NextProfile.Keys()) == 0 {
+		t.Error("NextProfile binding has no keys")
+	}
+	if len(k.PrevProfile.Keys()) == 0 {
+		t.Error("PrevProfile binding has no keys")
+	}
+	hasCtrlP := false
+	for _, key := range k.NextProfile.Keys() {
+		if key == "ctrl+p" {
+			hasCtrlP = true
+		}
+	}
+	if !hasCtrlP {
+		t.Errorf("NextProfile keys = %v, want ctrl+p", k.NextProfile.Keys())
+	}
+}

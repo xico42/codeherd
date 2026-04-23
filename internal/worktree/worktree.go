@@ -290,7 +290,7 @@ func (s *Service) List(project string) ([]ListEntry, error) {
 		for _, wt := range worktrees {
 			session := ""
 			if wt.Branch != "" {
-				candidate := semconv.SessionName(name, wt.Branch)
+				candidate := semconv.SessionName("", name, wt.Branch)
 				if running, _ := s.tmux.HasSession(candidate); running {
 					session = candidate + " (running)"
 				}
@@ -327,8 +327,8 @@ func (s *Service) Delete(req DeleteRequest) error {
 	}
 
 	sessionNames := []string{
-		semconv.SessionName(req.Project, req.Branch),
-		semconv.ShellSessionName(req.Project, req.Branch),
+		semconv.SessionName("", req.Project, req.Branch),
+		semconv.ShellSessionName("", req.Project, req.Branch),
 	}
 
 	for _, name := range sessionNames {

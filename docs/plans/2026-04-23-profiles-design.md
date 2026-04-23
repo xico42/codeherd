@@ -3,7 +3,8 @@
 Add optional, fully-scoped "profiles" so one codeherd install can juggle
 multiple independent contexts (personal, work, client A/B) without merging
 their data. When profiles are enabled, the TUI cycles between them with
-`shift+tab`; when disabled, behavior is unchanged.
+`Ctrl+P` (next) / `Ctrl+N` (previous); when disabled, behavior is
+unchanged.
 
 ## Context
 
@@ -62,8 +63,11 @@ Related:
   user option `@codeherd_profile` on each session, read back verbatim
   into the existing `tmux.SessionRecord`. The name is just the tmux
   identifier; the option is the source of truth for filtering.
-- The TUI gets a `shift+tab` binding that cycles profiles. The key is
-  shown in help only when `registry != nil && len(Names) > 1`.
+- The TUI gets `Ctrl+P` (next profile) and `Ctrl+N` (previous profile)
+  bindings. They're shown in help only when `registry != nil &&
+  len(Names) > 1`. `Tab` / `Shift+Tab` remain reserved for a future
+  intra-profile feature (cycling between sessions / worktrees / projects
+  lists).
 - Services that have **no `*Config` dependency** (`tmuxClient`, `sesSvc`,
   hooks, runners) are **shared** across profiles in the TUI. Services
   that bind to `*Config` (`wtSvc`, `projSvc`) are **rebuilt per profile**
@@ -305,18 +309,23 @@ type profileBundle struct {
 
 **Rebuilt per profile** (cached): `cfg`, `wtSvc`, `projSvc`.
 
-New key:
+New keys:
 
 ```go
-Switch key.Binding // "shift+tab"
+NextProfile key.Binding // "ctrl+p"
+PrevProfile key.Binding // "ctrl+n"
 ```
 
-Bound to `tea.KeyShiftTab`. Shown in help only when `registry != nil &&
-len(registry.Names) > 1`. Ignored on Form / Confirm / AgentPicker screens.
+Shown in help only when `registry != nil && len(registry.Names) > 1`.
+Ignored on Form / Confirm / AgentPicker screens (user is mid-action).
+Ignored while the list filter is active (the list owns keypresses during
+filtering).
 
-Switch flow (list screen, `shift+tab` pressed):
+Switch flow (list screen, `Ctrl+P` or `Ctrl+N` pressed):
 
-1. `next = registry.Names[(indexOf(active) + 1) % len(Names)]`.
+1. Compute target:
+   - `Ctrl+P`: `next = Names[(indexOf(active) + 1) % len(Names)]`
+   - `Ctrl+N`: `next = Names[(indexOf(active) - 1 + len(Names)) % len(Names)]`
 2. Look up `next` in `profileCache`.
    - Hit: swap `m.cfg`, `m.wtSvc`, `m.projSvc` to the cached bundle.
    - Miss: `config.LoadProfile(registry.ProfilesDir, next)`; build fresh
@@ -377,45 +386,110 @@ No name parsing is involved.
   - `List` populates `SessionInfo.Profile` verbatim from records.
   - `ShowByName` and `StopByName` match on the given name + type.
 - `internal/tui` —
-  - `shift+tab` on list screen cycles and rebuilds services; `sesSvc` /
-    `tmuxClient` pointers unchanged.
+  - `Ctrl+P` on list screen cycles forward and rebuilds services;
+    `sesSvc` / `tmuxClient` pointers unchanged.
+  - `Ctrl+N` cycles backward.
   - Cache hit: second cycle back to a prior profile reuses the same
     `*Config` pointer.
-  - `shift+tab` is a no-op on Form / Confirm / AgentPicker.
+  - `Ctrl+P` / `Ctrl+N` are no-ops on Form / Confirm / AgentPicker
+    screens and while the list filter is active.
   - Title renders profile name when `registry != nil`.
   - Load failure on switch leaves active unchanged and sets `statusMsg`.
 
 ### Integration test (`//go:build integration`)
 
-Satisfies issue #2's fourth eval criterion. File:
-`cmd/profiles_integration_test.go`.
+File: `cmd/profiles_integration_test.go`. Uses the same in-process
+convention as today's `cmd/session_integration_test.go`: `runCmd`
+(`os.Args` + `cmd.Execute()`), real `t.TempDir()` config + profiles
+dir, real `git init` for projects, real tmux sessions cleaned up on
+teardown, skip when tmux is absent.
 
-Setup: temp dir with a main config (`profiles_enabled=true`) and a
+Setup: a temp main config with `profiles_enabled=true` and a temp
 `profiles/` dir holding two distinct profile files (distinct
-`projects_dir`, distinct agents, distinct `[projects]` maps). Build
-`./ch`.
+`projects_dir`, distinct agents, distinct `[projects]` maps).
 
-Assertions, each via the built binary:
+Assertions, each via `runCmd`:
 
-- `ch -p=personal list project` lists only personal projects.
-- `ch -p=work list project` lists only work projects.
-- With `main_profile=personal` set, `ch list project` matches
-  `ch -p=personal list project`.
-- With `main_profile` unset and no `-p`, `ch list project` fails with a
+- `--profile=personal list project` lists only personal projects
+  (stdout captured).
+- `--profile=work list project` lists only work projects.
+- With `main_profile=personal` in the main config, `list project` with
+  no `-p` matches `--profile=personal list project`.
+- With `main_profile` unset and no `-p`, `list project` fails with a
   clear error mentioning `main_profile` / `-p`.
-- Sessions created under `-p=personal` are invisible under `-p=work` and
-  vice versa (start one in each, list under each, diff).
-- `tmux ls` output confirms profile-prefixed session names on disk
-  (e.g. a session listed as `personal-myapp-main`), not just filtered at
-  the TUI layer.
-- A main config carrying stray `[projects]` in profile mode produces the
-  warning on stderr but does not fail.
+- Sessions created under `--profile=personal` are invisible under
+  `--profile=work` and vice versa (start one in each, list under each,
+  diff). Teardown kills any tmux sessions the test created.
+- `tmux ls` confirms profile-prefixed session names on disk (e.g.
+  `personal-myapp-main`), verified by calling `tmux ls` directly after
+  the `create session` run — not just by TUI filtering.
+- A main config carrying stray `[projects]` in profile mode produces
+  the warning on stderr (captured via `os.Stderr` swap) but does not
+  fail the command.
 
 ### Coverage
 
-`make check` enforces 80% aggregate. The new code paths in
-`internal/config`, `internal/semconv`, and the TUI switch path are the
-hot spots and must exercise every branch above.
+`make coverage` measures **only unit tests** — it does not pass
+`-tags integration`, and `test-integration` runs without
+`-coverprofile`. The 80% threshold is therefore satisfied **entirely
+by unit tests**; the integration test above contributes functional
+assurance but zero coverage points.
+
+Every new branch in this design must be exercised by a unit test:
+
+- `internal/config`: all `Load` branches in profile mode (precedence,
+  missing dir, missing file, parse error, stray-keys warning on/off),
+  `LoadProfile` round-trip, profile-meta keys silently ignored inside
+  a profile file.
+- `internal/semconv`: `SessionName` for profile-on and profile-off
+  shapes.
+- `internal/tmux`: `SessionRecord.Profile` populated from the
+  `@codeherd_profile` option; empty when unset.
+- `internal/session`: `Start` writing `@codeherd_profile` for the
+  profile-on and profile-off cases; `List` populating
+  `SessionInfo.Profile`; `StopByName`/`ShowByName` matching on
+  `(name, sessionType)`.
+- `internal/tui`: `Ctrl+P`/`Ctrl+N` cycling behavior, cache hit,
+  no-op on non-list screens and during filtering, title rendering,
+  load-failure fallback.
+
+### One-off manual acceptance validation
+
+A non-automated check performed once during implementation (not wired
+into `make check`). The fake config lives at `./tmp/` — a repo-local
+folder next to the `ch` binary so paths are short, predictable, and
+easy to inspect. Add `/tmp/` to `.gitignore` as part of the
+implementation.
+
+After the implementation is otherwise complete:
+
+1. `make build` to produce `./ch`.
+2. Create the fake config tree:
+   - `./tmp/config.toml` with `profiles_enabled = true`,
+     `profiles_dir = "./tmp/profiles"`, `main_profile = "personal"`.
+   - `./tmp/profiles/personal.toml` and `./tmp/profiles/work.toml`
+     with distinct `projects_dir` (e.g. `./tmp/personal-projects`
+     and `./tmp/work-projects`), distinct agents, and distinct
+     `[projects]` maps.
+3. Run, eyeballing each output:
+   - `./ch --config=./tmp/config.toml list project`
+   - `./ch --config=./tmp/config.toml -p=work list project`
+   - `./ch --config=./tmp/config.toml -p=nope list project` (expect
+     clear error)
+   - With `main_profile` removed from `./tmp/config.toml`,
+     `./ch --config=./tmp/config.toml list project` (expect clear
+     error mentioning `main_profile` / `-p`)
+4. Run `./ch --config=./tmp/config.toml --no-tmux` and exercise
+   `Ctrl+P`/`Ctrl+N` in the TUI to confirm the cycle.
+5. Tear down: `rm -rf ./tmp`, and `tmux kill-server` if any stray
+   sessions remain.
+
+This check exists to satisfy issue #2's fourth eval criterion
+literally ("using the built `ch` binary") and to catch regressions
+that an in-process test might mask — e.g., init-time globals, flag
+parsing ordering, or the persistent flag behaving differently under
+`cobra.Execute()` vs a subcommand call. It is not re-run on every
+change; it's a one-off acceptance gate.
 
 ## Migration
 
@@ -434,8 +508,8 @@ unchanged.
 
 ## Known Caveats
 
-- `shift+tab` is a common terminal/multiplexer binding (e.g. tmux
-  `send-prev`, some readline bindings). In practice tmux forwards it to
-  the running program fine, but users with custom bindings may see
-  conflicts. If it becomes a recurring complaint, the binding is easy to
-  swap in a follow-up.
+- `Ctrl+P` / `Ctrl+N` overlap with Emacs/readline "previous/next
+  history" shortcuts. Inside a Bubble Tea TUI those shell bindings don't
+  fire, but users with heavily customized terminals may see conflicts.
+  If it becomes a recurring complaint, the binding is easy to swap in a
+  follow-up.

@@ -79,7 +79,7 @@ func TestClient_KillSession_error(t *testing.T) {
 }
 
 func TestClient_ListSessions_ok(t *testing.T) {
-	line := "$1\tmyapp-feat\tmyapp-feat\tagent\trunning\tdoing stuff\t2026-01-01T00:00:00Z"
+	line := "$1\tmyapp-feat\tmyapp-feat\tagent\trunning\tdoing stuff\t2026-01-01T00:00:00Z\tpersonal"
 	r := &mockRunner{exitCode: 0, stdout: line + "\n"}
 	c := tmux.NewClient(r)
 	records, err := c.ListSessions()
@@ -110,6 +110,41 @@ func TestClient_ListSessions_ok(t *testing.T) {
 	}
 	if rec.StartedAt != "2026-01-01T00:00:00Z" {
 		t.Errorf("StartedAt = %q, want 2026-01-01T00:00:00Z", rec.StartedAt)
+	}
+	if rec.Profile != "personal" {
+		t.Errorf("Profile = %q, want personal", rec.Profile)
+	}
+}
+
+func TestClient_ListSessions_readsProfileOption(t *testing.T) {
+	// 8-field line: profile populated.
+	line := "$1\tmyapp-feat\tmyapp-feat\tagent\trunning\t\t2026-04-23T00:00:00Z\twork\n"
+	r := &mockRunner{exitCode: 0, stdout: line}
+	c := tmux.NewClient(r)
+	records, err := c.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(records))
+	}
+	if records[0].Profile != "work" {
+		t.Errorf("Profile = %q, want work", records[0].Profile)
+	}
+}
+
+func TestClient_ListSessions_missingProfileIsEmpty(t *testing.T) {
+	// Old 7-field line: profile must default to "" (backward-compatible
+	// with existing runs after tmux reports no @codeherd_profile option).
+	line := "$1\tmyapp-feat\tmyapp-feat\tagent\trunning\t\t2026-04-23T00:00:00Z\n"
+	r := &mockRunner{exitCode: 0, stdout: line}
+	c := tmux.NewClient(r)
+	records, err := c.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if records[0].Profile != "" {
+		t.Errorf("Profile = %q, want empty", records[0].Profile)
 	}
 }
 

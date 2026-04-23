@@ -22,8 +22,11 @@ type Config struct {
 
 // DefaultsConfig holds default values applied to every session.
 type DefaultsConfig struct {
-	ProjectsDir string `toml:"projects_dir"`
-	Agent       string `toml:"agent"`
+	ProjectsDir     string `toml:"projects_dir"`
+	Agent           string `toml:"agent"`
+	ProfilesEnabled bool   `toml:"profiles_enabled"`
+	ProfilesDir     string `toml:"profiles_dir"`
+	MainProfile     string `toml:"main_profile"`
 }
 
 const defaultProjectsDir = "~/projects"
@@ -54,11 +57,16 @@ func (c *Config) expandPaths() error {
 
 // Load reads config from path. If path is empty, uses ~/.config/codeherd/config.toml.
 // A missing file returns an empty Config with defaults and nil error.
-func Load(path string) (*Config, error) {
+//
+// When the loaded config has defaults.profiles_enabled = true, Load resolves
+// the active profile (profileName arg → defaults.main_profile → error), parses
+// it, and returns a populated *ProfileRegistry. Stray projects/agents keys in
+// the main config produce a one-time warning and are discarded.
+func Load(path, profileName string) (*Config, *ProfileRegistry, error) {
 	if path == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, fmt.Errorf("getting home dir: %w", err)
+			return nil, nil, fmt.Errorf("getting home dir: %w", err)
 		}
 		path = filepath.Join(home, ".config", "codeherd", "config.toml")
 	}
@@ -68,20 +76,27 @@ func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := cfg.expandPaths(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return cfg, nil
+		return cfg, nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading config: %w", err)
+		return nil, nil, fmt.Errorf("reading config: %w", err)
 	}
 	if err := toml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("parsing config %s: %w", path, err)
+		return nil, nil, fmt.Errorf("parsing config %s: %w", path, err)
 	}
-	if err := cfg.expandPaths(); err != nil {
-		return nil, err
+
+	if !cfg.Defaults.ProfilesEnabled {
+		if err := cfg.expandPaths(); err != nil {
+			return nil, nil, err
+		}
+		return cfg, nil, nil
 	}
-	return cfg, nil
+
+	// Profile mode: cfg's projects/agents/projects_dir are warned about
+	// and discarded. Returned *Config comes from the profile file.
+	return loadProfileMode(cfg, path, profileName)
 }
 
 // Save writes the config back to its file, creating directories as needed.

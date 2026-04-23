@@ -56,6 +56,7 @@ type StartRequest struct {
 	Cmd     string
 	Env     map[string]string
 	Attach  bool
+	Profile string // "" when profiles are disabled
 }
 
 // Start creates a new detached tmux session for the given project/branch,
@@ -68,11 +69,11 @@ func (s *Service) Start(req StartRequest) (string, error) {
 		req.Type = semconv.SessionTypeAgent
 	}
 
-	// Canonical name is always <project>-<branch>; tmux name differs by type.
-	canonicalName := semconv.SessionName(req.Project, req.Branch)
+	// Canonical name is <[profile-]project-branch>; tmux name differs by type.
+	canonicalName := semconv.SessionName(req.Profile, req.Project, req.Branch)
 	var tmuxName string
 	if req.Type == semconv.SessionTypeShell {
-		tmuxName = semconv.ShellSessionName(req.Project, req.Branch)
+		tmuxName = semconv.ShellSessionName(req.Profile, req.Project, req.Branch)
 	} else {
 		tmuxName = canonicalName
 	}
@@ -121,6 +122,9 @@ func (s *Service) Start(req StartRequest) (string, error) {
 	_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionStartedAt, now.Format(time.RFC3339))
 	_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionCanonicalName, canonicalName)
 	_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionSessionType, req.Type)
+	if req.Profile != "" {
+		_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionProfile, req.Profile)
+	}
 
 	// Get the stable session ID (unaffected by renames).
 	id, err := s.tmux.SessionID(tmuxName)
@@ -147,6 +151,7 @@ type SessionInfo struct {
 	Annotation string
 	StartedAt  time.Time
 	UpdatedAt  time.Time
+	Profile    string
 }
 
 // List returns a SessionInfo for every active tmux session, including both agent and shell types.
@@ -163,6 +168,7 @@ func (s *Service) List() ([]SessionInfo, error) {
 			Type:       r.SessionType,
 			Status:     r.Status,
 			Annotation: r.Annotation,
+			Profile:    r.Profile,
 		}
 		if r.StartedAt != "" {
 			info.StartedAt, _ = time.Parse(time.RFC3339, r.StartedAt)
@@ -179,7 +185,7 @@ func (s *Service) Show(project, branch, sessionType string) (*SessionInfo, error
 	if sessionType == "" {
 		sessionType = semconv.SessionTypeAgent
 	}
-	canonicalName := semconv.SessionName(project, branch)
+	canonicalName := semconv.SessionName("", project, branch)
 	records, err := s.tmux.ListSessions()
 	if err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
@@ -193,6 +199,7 @@ func (s *Service) Show(project, branch, sessionType string) (*SessionInfo, error
 				Type:       r.SessionType,
 				Status:     r.Status,
 				Annotation: r.Annotation,
+				Profile:    r.Profile,
 			}
 			if r.StartedAt != "" {
 				info.StartedAt, _ = time.Parse(time.RFC3339, r.StartedAt)
@@ -203,6 +210,63 @@ func (s *Service) Show(project, branch, sessionType string) (*SessionInfo, error
 	return nil, fmt.Errorf("%w: %s/%s (%s)", ErrSessionNotFound, project, branch, sessionType)
 }
 
+// ShowByName returns the SessionInfo for the session whose canonical
+// name + type match exactly. Returns ErrSessionNotFound otherwise.
+func (s *Service) ShowByName(name, sessionType string) (*SessionInfo, error) {
+	if sessionType == "" {
+		sessionType = semconv.SessionTypeAgent
+	}
+	records, err := s.tmux.ListSessions()
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+	for _, r := range records {
+		if r.CanonicalName == name && r.SessionType == sessionType {
+			info := &SessionInfo{
+				Name:       r.CanonicalName,
+				TmuxName:   r.Name,
+				SessionID:  r.ID,
+				Type:       r.SessionType,
+				Status:     r.Status,
+				Annotation: r.Annotation,
+				Profile:    r.Profile,
+			}
+			if r.StartedAt != "" {
+				info.StartedAt, _ = time.Parse(time.RFC3339, r.StartedAt)
+			}
+			return info, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: %s (%s)", ErrSessionNotFound, name, sessionType)
+}
+
+// StopByName kills the session whose canonical name + type match exactly.
+// Empty sessionType defaults to semconv.SessionTypeAgent.
+// Returns ErrSessionNotFound if no matching session exists.
+func (s *Service) StopByName(name, sessionType string) error {
+	if sessionType == "" {
+		sessionType = semconv.SessionTypeAgent
+	}
+	records, err := s.tmux.ListSessions()
+	if err != nil {
+		return fmt.Errorf("listing sessions: %w", err)
+	}
+	actualName := ""
+	for _, r := range records {
+		if r.CanonicalName == name && r.SessionType == sessionType {
+			actualName = r.Name
+			break
+		}
+	}
+	if actualName == "" {
+		return fmt.Errorf("%w: %s (%s)", ErrSessionNotFound, name, sessionType)
+	}
+	if err := s.tmux.KillSession(actualName); err != nil {
+		return fmt.Errorf("killing session: %w", err)
+	}
+	return nil
+}
+
 // Stop kills the tmux session identified by project, branch, and type.
 // Empty sessionType defaults to semconv.SessionTypeAgent.
 // Returns ErrSessionNotFound if no matching session exists.
@@ -210,7 +274,7 @@ func (s *Service) Stop(project, branch, sessionType string) error {
 	if sessionType == "" {
 		sessionType = semconv.SessionTypeAgent
 	}
-	canonicalName := semconv.SessionName(project, branch)
+	canonicalName := semconv.SessionName("", project, branch)
 	records, err := s.tmux.ListSessions()
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)

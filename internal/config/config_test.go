@@ -10,12 +10,41 @@ import (
 
 func TestLoad_MissingFile(t *testing.T) {
 	dir := t.TempDir()
-	cfg, err := config.Load(filepath.Join(dir, "config.toml"))
+	cfg, _, err := config.Load(filepath.Join(dir, "config.toml"), "")
 	if err != nil {
 		t.Fatalf("Load() error = %v, want nil", err)
 	}
 	if cfg == nil {
 		t.Fatal("Load() = nil, want non-nil")
+	}
+}
+
+func TestLoad_parsesProfileMetaFields(t *testing.T) {
+	// With profiles_enabled=false the TOML is parsed into *Config verbatim,
+	// so this is where we assert the three profile-meta fields round-trip.
+	// (Profile-mode resolution is covered in profile_test.go.)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := `[defaults]
+profiles_enabled = false
+profiles_dir = "/custom/profiles"
+main_profile = "personal"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := config.Load(path, "")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Defaults.ProfilesEnabled {
+		t.Error("ProfilesEnabled = true, want false")
+	}
+	if cfg.Defaults.ProfilesDir != "/custom/profiles" {
+		t.Errorf("ProfilesDir = %q, want /custom/profiles", cfg.Defaults.ProfilesDir)
+	}
+	if cfg.Defaults.MainProfile != "personal" {
+		t.Errorf("MainProfile = %q, want personal", cfg.Defaults.MainProfile)
 	}
 }
 
@@ -25,7 +54,7 @@ func TestLoad_CorruptFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{{invalid"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	_, err := config.Load(path)
+	_, _, err := config.Load(path, "")
 	if err == nil {
 		t.Fatal("Load() error = nil, want error for corrupt file")
 	}
@@ -35,7 +64,7 @@ func TestConfig_Save(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sub", "config.toml") // Save must create subdirectory
 
-	cfg, err := config.Load(path)
+	cfg, _, err := config.Load(path, "")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -44,7 +73,7 @@ func TestConfig_Save(t *testing.T) {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	cfg2, err := config.Load(path)
+	cfg2, _, err := config.Load(path, "")
 	if err != nil {
 		t.Fatalf("second Load() error = %v", err)
 	}
@@ -68,7 +97,7 @@ default_branch = "develop"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	cfg, err := config.Load(path)
+	cfg, _, err := config.Load(path, "")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -90,7 +119,7 @@ default_branch = "develop"
 
 func TestLoad_ProjectsEmpty(t *testing.T) {
 	dir := t.TempDir()
-	cfg, err := config.Load(filepath.Join(dir, "config.toml"))
+	cfg, _, err := config.Load(filepath.Join(dir, "config.toml"), "")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -109,7 +138,7 @@ projects_dir = "~/projects"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	cfg, err := config.Load(path)
+	cfg, _, err := config.Load(path, "")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -122,7 +151,7 @@ projects_dir = "~/projects"
 
 func TestLoad_ProjectsDirDefault(t *testing.T) {
 	dir := t.TempDir()
-	cfg, err := config.Load(filepath.Join(dir, "config.toml"))
+	cfg, _, err := config.Load(filepath.Join(dir, "config.toml"), "")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -141,7 +170,7 @@ func TestLoad_ReadError(t *testing.T) {
 	if err := os.Mkdir(cfgPath, 0o700); err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
-	_, err := config.Load(cfgPath)
+	_, _, err := config.Load(cfgPath, "")
 	if err == nil {
 		t.Fatal("Load() on directory = nil, want error")
 	}
@@ -150,7 +179,7 @@ func TestLoad_ReadError(t *testing.T) {
 func TestConfig_Path(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	cfg, _ := config.Load(path)
+	cfg, _, _ := config.Load(path, "")
 	if cfg.Path() != path {
 		t.Errorf("Path() = %q, want %q", cfg.Path(), path)
 	}
@@ -180,7 +209,7 @@ post-session = "curl http://example.com"
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, err := config.Load(path)
+	cfg, _, err := config.Load(path, "")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}

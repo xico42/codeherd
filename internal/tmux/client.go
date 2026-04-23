@@ -15,6 +15,7 @@ type SessionRecord struct {
 	Status        string // @codeherd_status
 	Annotation    string // @codeherd_annotation
 	StartedAt     string // @codeherd_started_at (raw RFC3339 string)
+	Profile       string // @codeherd_profile, "" when unset
 }
 
 // Client provides typed tmux operations built on a Runner.
@@ -222,7 +223,7 @@ func (c *Client) CurrentSession() (string, error) {
 // ListSessions returns a SessionRecord for every active tmux session.
 // Returns nil (no error) when no sessions exist (tmux exits 1 in that case).
 func (c *Client) ListSessions() ([]SessionRecord, error) {
-	format := "#{session_id}\t#{session_name}\t#{@codeherd_canonical_name}\t#{@codeherd_session_type}\t#{@codeherd_status}\t#{@codeherd_annotation}\t#{@codeherd_started_at}"
+	format := "#{session_id}\t#{session_name}\t#{@codeherd_canonical_name}\t#{@codeherd_session_type}\t#{@codeherd_status}\t#{@codeherd_annotation}\t#{@codeherd_started_at}\t#{@codeherd_profile}"
 	stdout, stderr, code, err := c.runner.Run("list-sessions", "-F", format)
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-sessions: %w", err)
@@ -238,8 +239,8 @@ func (c *Client) ListSessions() ([]SessionRecord, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "\t", 7)
-		for len(fields) < 7 {
+		fields := strings.SplitN(line, "\t", 8)
+		for len(fields) < 8 {
 			fields = append(fields, "")
 		}
 		records = append(records, SessionRecord{
@@ -250,6 +251,7 @@ func (c *Client) ListSessions() ([]SessionRecord, error) {
 			Status:        fields[4],
 			Annotation:    fields[5],
 			StartedAt:     fields[6],
+			Profile:       fields[7],
 		})
 	}
 	return records, nil

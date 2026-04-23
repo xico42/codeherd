@@ -786,8 +786,8 @@ func (m *mockTmuxRunnerPerSession) Run(args ...string) (string, string, int, err
 }
 
 func TestService_Delete_Force_KillsBothSessionTypes(t *testing.T) {
-	agentSession := semconv.SessionName("myapp", "feature")
-	shellSession := semconv.ShellSessionName("myapp", "feature")
+	agentSession := semconv.SessionName("", "myapp", "feature")
+	shellSession := semconv.ShellSessionName("", "myapp", "feature")
 
 	runner := &mockTmuxRunnerPerSession{
 		activeSessions: map[string]bool{

@@ -22,7 +22,7 @@ CLAUDE_CONFIG_DIR = "/custom"
 	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, _, err := config.Load(cfgPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ cmd = "claude"
 	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, _, err := config.Load(cfgPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ cmd = "claude"
 }
 
 func TestAgentByName_noAgentsDefined(t *testing.T) {
-	cfg, err := config.Load(filepath.Join(t.TempDir(), "config.toml"))
+	cfg, _, err := config.Load(filepath.Join(t.TempDir(), "config.toml"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ cmd = "claude"
 	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, _, err := config.Load(cfgPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestAgentConfig_Command(t *testing.T) {
 }
 
 func TestAgentNames_empty(t *testing.T) {
-	cfg, err := config.Load(filepath.Join(t.TempDir(), "config.toml"))
+	cfg, _, err := config.Load(filepath.Join(t.TempDir(), "config.toml"), "")
 	if err != nil {
 		t.Fatal(err)
 	}

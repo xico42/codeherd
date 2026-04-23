@@ -439,7 +439,7 @@ func runFileCopyAndTemplate(cfg *config.Config, projCfg config.ProjectConfig, h 
 		Project:      proj,
 		Branch:       branch,
 		WorktreePath: wtPath,
-		SessionName:  semconv.SessionName(proj, branch),
+		SessionName:  semconv.SessionName("", proj, branch),
 	}, tmplAttrs); err != nil {
 		return fmt.Errorf("template processing: %w", err)
 	}

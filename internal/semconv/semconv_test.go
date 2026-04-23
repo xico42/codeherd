@@ -33,9 +33,55 @@ func TestSessionName(t *testing.T) {
 		{"api", "fix/auth/token", "api-fix-auth-token"},
 	}
 	for _, tt := range tests {
-		if got := semconv.SessionName(tt.project, tt.branch); got != tt.want {
+		if got := semconv.SessionName("", tt.project, tt.branch); got != tt.want {
 			t.Errorf("SessionName(%q, %q) = %q, want %q", tt.project, tt.branch, got, tt.want)
 		}
+	}
+}
+
+func TestSessionName_withProfile(t *testing.T) {
+	cases := []struct {
+		profile string
+		project string
+		branch  string
+		want    string
+	}{
+		{"", "myapp", "main", "myapp-main"},
+		{"", "myapp", "feat/x", "myapp-feat-x"},
+		{"personal", "myapp", "main", "personal-myapp-main"},
+		{"work", "myapp", "feat/x", "work-myapp-feat-x"},
+	}
+	for _, tc := range cases {
+		got := semconv.SessionName(tc.profile, tc.project, tc.branch)
+		if got != tc.want {
+			t.Errorf("SessionName(%q, %q, %q) = %q, want %q",
+				tc.profile, tc.project, tc.branch, got, tc.want)
+		}
+	}
+}
+
+func TestShellSessionName_withProfile(t *testing.T) {
+	cases := []struct {
+		profile string
+		project string
+		branch  string
+		want    string
+	}{
+		{"", "myapp", "main", "myapp-main~sh"},
+		{"work", "myapp", "main", "work-myapp-main~sh"},
+	}
+	for _, tc := range cases {
+		got := semconv.ShellSessionName(tc.profile, tc.project, tc.branch)
+		if got != tc.want {
+			t.Errorf("ShellSessionName(%q, %q, %q) = %q, want %q",
+				tc.profile, tc.project, tc.branch, got, tc.want)
+		}
+	}
+}
+
+func TestTmuxOptionProfile_constant(t *testing.T) {
+	if semconv.TmuxOptionProfile != "@codeherd_profile" {
+		t.Errorf("TmuxOptionProfile = %q, want @codeherd_profile", semconv.TmuxOptionProfile)
 	}
 }
 
@@ -72,7 +118,7 @@ func TestShellSessionName(t *testing.T) {
 		{"api", "fix/auth/token", "api-fix-auth-token~sh"},
 	}
 	for _, tt := range tests {
-		if got := semconv.ShellSessionName(tt.project, tt.branch); got != tt.want {
+		if got := semconv.ShellSessionName("", tt.project, tt.branch); got != tt.want {
 			t.Errorf("ShellSessionName(%q, %q) = %q, want %q", tt.project, tt.branch, got, tt.want)
 		}
 	}

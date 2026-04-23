@@ -3,14 +3,16 @@ package tui
 import "charm.land/bubbles/v2/key"
 
 type keyMap struct {
-	Attach  key.Binding
-	Shell   key.Binding
-	Clone   key.Binding
-	New     key.Binding
-	Delete  key.Binding
-	Refresh key.Binding
-	Help    key.Binding
-	Quit    key.Binding
+	Attach      key.Binding
+	Shell       key.Binding
+	Clone       key.Binding
+	New         key.Binding
+	Delete      key.Binding
+	Refresh     key.Binding
+	Help        key.Binding
+	Quit        key.Binding
+	NextProfile key.Binding
+	PrevProfile key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -46,6 +48,14 @@ func defaultKeyMap() keyMap {
 		Quit: key.NewBinding(
 			key.WithKeys("q", "ctrl+c"),
 			key.WithHelp("q", "quit"),
+		),
+		NextProfile: key.NewBinding(
+			key.WithKeys("ctrl+p"),
+			key.WithHelp("ctrl+p", "next profile"),
+		),
+		PrevProfile: key.NewBinding(
+			key.WithKeys("ctrl+n"),
+			key.WithHelp("ctrl+n", "prev profile"),
 		),
 	}
 }

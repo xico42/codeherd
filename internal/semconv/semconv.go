@@ -13,6 +13,7 @@ const (
 	TmuxOptionStartedAt     = "@codeherd_started_at"
 	TmuxOptionCanonicalName = "@codeherd_canonical_name"
 	TmuxOptionSessionType   = "@codeherd_session_type"
+	TmuxOptionProfile       = "@codeherd_profile"
 
 	StatusRunning = "running"
 	StatusWaiting = "waiting"
@@ -53,12 +54,20 @@ func FlattenBranch(branch string) string {
 	return strings.ReplaceAll(branch, "/", "-")
 }
 
-func SessionName(project, branch string) string {
-	return project + "-" + FlattenBranch(branch)
+// SessionName returns the canonical tmux session name.
+// profile == "" gives "<project>-<branch>" (backward-compatible).
+// profile != "" gives "<profile>-<project>-<branch>" for tmux uniqueness.
+func SessionName(profile, project, branch string) string {
+	if profile == "" {
+		return project + "-" + FlattenBranch(branch)
+	}
+	return profile + "-" + project + "-" + FlattenBranch(branch)
 }
 
-func ShellSessionName(project, branch string) string {
-	return SessionName(project, branch) + "~sh"
+// ShellSessionName returns the tmux session name for the shell variant,
+// carrying the same profile prefix as SessionName.
+func ShellSessionName(profile, project, branch string) string {
+	return SessionName(profile, project, branch) + "~sh"
 }
 
 func CloneDir(projectsDir, repoPath string) string {

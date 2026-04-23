@@ -75,9 +75,9 @@ func (c *ListSessionCmd) Cobra() *cobra.Command {
 
 func (c *ListSessionCmd) Run(cmd *cobra.Command, _ []string) error {
 	svc := newSessionService()
-	sessions, err := svc.List()
+	sessions, err := listSessionsForProfile(svc)
 	if err != nil {
-		return fmt.Errorf("listing sessions: %w", err)
+		return err
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "SESSION\tTYPE\tSTATUS")
@@ -112,7 +112,7 @@ func (c *ShowSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	project, branch := args[0], args[1]
 	sessionType := sessionTypeFromFlag(c.Shell)
 	svc := newSessionService()
-	info, err := svc.Show(project, branch, sessionType)
+	info, err := showSessionForProfile(svc, project, branch, sessionType)
 	if err != nil {
 		return sessionErr(cmd, err)
 	}
@@ -227,7 +227,7 @@ func (c *CreateSessionCmd) Run(cmd *cobra.Command, args []string) error {
 				Project:      project,
 				Branch:       branch,
 				WorktreePath: result.Path,
-				SessionName:  semconv.SessionName(project, branch),
+				SessionName:  semconv.SessionName(activeProfile(), project, branch),
 			}, tmplAttrs); err != nil {
 				return fmt.Errorf("processing templates: %w", err)
 			}
@@ -236,9 +236,10 @@ func (c *CreateSessionCmd) Run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	name := semconv.SessionName(project, branch)
+	profile := activeProfile()
+	name := semconv.SessionName(profile, project, branch)
 	if sessionType == semconv.SessionTypeShell {
-		name = semconv.ShellSessionName(project, branch)
+		name = semconv.ShellSessionName(profile, project, branch)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
 
@@ -251,6 +252,7 @@ func (c *CreateSessionCmd) Run(cmd *cobra.Command, args []string) error {
 		Type:    sessionType,
 		Cmd:     sessionCmd,
 		Env:     sessionEnv,
+		Profile: profile,
 		Attach:  c.Attach,
 	})
 	if err != nil {
@@ -299,7 +301,7 @@ func (c *DeleteSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	svc := newSessionService()
 
 	if !c.Force {
-		info, err := svc.Show(project, branch, sessionType)
+		info, err := showSessionForProfile(svc, project, branch, sessionType)
 		if err != nil {
 			return sessionErr(cmd, err)
 		}
@@ -315,7 +317,7 @@ func (c *DeleteSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Stopping %s/%s...  ", project, branch)
-	if err := svc.Stop(project, branch, sessionType); err != nil {
+	if err := stopSessionForProfile(svc, project, branch, sessionType); err != nil {
 		fmt.Fprintln(cmd.OutOrStdout())
 		return sessionErr(cmd, err)
 	}
@@ -345,7 +347,7 @@ func (c *AttachSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	project, branch := args[0], args[1]
 	sessionType := sessionTypeFromFlag(c.Shell)
 	svc := newSessionService()
-	info, err := svc.Show(project, branch, sessionType)
+	info, err := showSessionForProfile(svc, project, branch, sessionType)
 	if err != nil {
 		return sessionErr(cmd, err)
 	}

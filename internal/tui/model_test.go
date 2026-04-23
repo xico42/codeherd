@@ -2,6 +2,8 @@ package tui
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -404,7 +406,7 @@ func TestModel_Init(t *testing.T) {
 }
 
 func TestNewModel(t *testing.T) {
-	m := NewModel(nil, nil, nil, nil, nil, false)
+	m := NewModel(nil, nil, nil, nil, nil, false, nil)
 	if m.screen != screenList {
 		t.Errorf("screen = %d, want %d", m.screen, screenList)
 	}
@@ -619,5 +621,79 @@ func TestModel_refreshCmd_withTmuxClient(t *testing.T) {
 		if strings.HasSuffix(item.Branch, "~sh") {
 			t.Errorf("shell session branch %q leaked into items", item.Branch)
 		}
+	}
+}
+
+func TestRefresh_filtersSessionsByActiveProfile(t *testing.T) {
+	// buildItems only surfaces sessions that line up with a worktree entry,
+	// so exercising the profile filter end-to-end needs a stubbed wtSvc in
+	// addition to the fake tmux.Client. Chunk 5's integration test covers
+	// this path with real services.
+	t.Skip("TODO: wire once fake wtSvc is accessible from test helpers")
+}
+
+func TestSwitchProfile_cyclesForwardAndReusesCache(t *testing.T) {
+	reg := &config.ProfileRegistry{
+		Active:      "personal",
+		Names:       []string{"personal", "work"},
+		ProfilesDir: t.TempDir(),
+	}
+	workPath := filepath.Join(reg.ProfilesDir, "work.toml")
+	if err := os.WriteFile(workPath, []byte(`[projects.b]
+repo = "git@x:b"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	personalCfg := &config.Config{}
+	m := NewModel(personalCfg, nil, nil, nil, nil, false, reg)
+
+	m2 := m.SwitchProfileForTest(+1)
+	if m2.Registry().Active != "work" {
+		t.Errorf("after forward cycle, Active = %q, want work", m2.Registry().Active)
+	}
+	m3 := m2.SwitchProfileForTest(+1)
+	if m3.Registry().Active != "personal" {
+		t.Errorf("after second forward cycle, Active = %q, want personal", m3.Registry().Active)
+	}
+	if m3.CurrentConfigForTest() != personalCfg {
+		t.Error("expected personal *Config to be reused from cache")
+	}
+}
+
+func TestSyncProfileKeyEnabled_gate(t *testing.T) {
+	// Nil registry → disabled.
+	m := NewModel(&config.Config{}, nil, nil, nil, nil, false, nil)
+	if m.NextProfileEnabledForTest() {
+		t.Error("NextProfile enabled with nil registry, want disabled")
+	}
+	// One profile → disabled.
+	reg1 := &config.ProfileRegistry{Active: "a", Names: []string{"a"}, ProfilesDir: t.TempDir()}
+	m = NewModel(&config.Config{}, nil, nil, nil, nil, false, reg1)
+	if m.NextProfileEnabledForTest() {
+		t.Error("NextProfile enabled with one profile, want disabled")
+	}
+	// Two profiles → enabled.
+	reg2 := &config.ProfileRegistry{Active: "a", Names: []string{"a", "b"}, ProfilesDir: t.TempDir()}
+	m = NewModel(&config.Config{}, nil, nil, nil, nil, false, reg2)
+	if !m.NextProfileEnabledForTest() {
+		t.Error("NextProfile disabled with two profiles, want enabled")
+	}
+}
+
+func TestSwitchProfile_loadFailurePreservesActive(t *testing.T) {
+	reg := &config.ProfileRegistry{
+		Active:      "personal",
+		Names:       []string{"personal", "bogus"},
+		ProfilesDir: t.TempDir(),
+	}
+	personalCfg := &config.Config{}
+	m := NewModel(personalCfg, nil, nil, nil, nil, false, reg)
+
+	m2 := m.SwitchProfileForTest(+1)
+	if m2.Registry().Active != "personal" {
+		t.Errorf("Active = %q, want unchanged (personal) after load failure", m2.Registry().Active)
+	}
+	if m2.StatusMsgForTest() == "" {
+		t.Error("expected statusMsg to describe the failure")
 	}
 }

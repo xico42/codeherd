@@ -122,7 +122,7 @@ func runTUIDirect(tmuxClient *tmux.Client) error {
 	projSvc := project.NewService(cfg, project.NewRealGitRunner(), &hooks.NoOp{})
 
 	insideTmux := os.Getenv("TMUX") != ""
-	m := tui.NewModel(cfg, wtSvc, sesSvc, projSvc, tmuxClient, insideTmux)
+	m := tui.NewModel(cfg, wtSvc, sesSvc, projSvc, tmuxClient, insideTmux, registry)
 	p := tea.NewProgram(m)
 
 	finalModel, err := p.Run()

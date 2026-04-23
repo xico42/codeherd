@@ -73,7 +73,7 @@ func buildItems(data refreshResult) []list.Item {
 	for _, wt := range data.worktrees {
 		projectHasWorktree[wt.project] = true
 
-		sessionName := semconv.SessionName(wt.project, wt.branch)
+		sessionName := semconv.SessionName("", wt.project, wt.branch)
 
 		shellID := data.shellSessions[sessionName]
 		item := Item{

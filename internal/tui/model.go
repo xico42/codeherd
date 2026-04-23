@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/project"
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/session"
@@ -77,6 +78,21 @@ type Model struct {
 
 	// Agent picker sub-model.
 	agentPicker *agentPickerModel
+
+	// Profile state. registry is nil when profile mode is off.
+	// profileCache memoizes per-profile services built on demand by
+	// the switch flow; the initial active profile is seeded on construction.
+	registry     *config.ProfileRegistry
+	profileCache map[string]profileBundle
+}
+
+// profileBundle holds the per-profile services that must be rebuilt
+// when the active profile changes. sesSvc and tmuxClient are shared
+// across profiles and live directly on Model.
+type profileBundle struct {
+	cfg     *config.Config
+	wtSvc   *worktree.Service
+	projSvc *project.Service
 }
 
 // NewModel creates the TUI model with all required services.
@@ -87,23 +103,41 @@ func NewModel(
 	projSvc *project.Service,
 	tmuxClient *tmux.Client,
 	insideTmux bool,
+	registry *config.ProfileRegistry,
 ) Model {
 	keys := defaultKeyMap()
 	l := newList(nil)
 	h := help.New()
 
-	return Model{
-		screen:     screenList,
-		list:       l,
-		keys:       keys,
-		help:       h,
-		cfg:        cfg,
-		wtSvc:      wtSvc,
-		sesSvc:     sesSvc,
-		projSvc:    projSvc,
-		tmuxClient: tmuxClient,
-		InsideTmux: insideTmux,
+	m := Model{
+		screen:       screenList,
+		list:         l,
+		keys:         keys,
+		help:         h,
+		cfg:          cfg,
+		wtSvc:        wtSvc,
+		sesSvc:       sesSvc,
+		projSvc:      projSvc,
+		tmuxClient:   tmuxClient,
+		InsideTmux:   insideTmux,
+		registry:     registry,
+		profileCache: map[string]profileBundle{},
 	}
+	if registry != nil {
+		m.profileCache[registry.Active] = profileBundle{cfg: cfg, wtSvc: wtSvc, projSvc: projSvc}
+	}
+	m = m.syncProfileKeyEnabled()
+	return m
+}
+
+// syncProfileKeyEnabled disables the profile-cycle bindings when there
+// are fewer than two profiles available (so they don't appear in help
+// output). Called at Model construction and after every profile switch.
+func (m Model) syncProfileKeyEnabled() Model {
+	enabled := m.registry != nil && len(m.registry.Names) > 1
+	m.keys.NextProfile.SetEnabled(enabled)
+	m.keys.PrevProfile.SetEnabled(enabled)
+	return m
 }
 
 func newList(items []list.Item) list.Model {
@@ -242,6 +276,12 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Refresh):
 			return m, m.refreshCmd()
 
+		case key.Matches(msg, m.keys.NextProfile):
+			return m.switchProfile(+1)
+
+		case key.Matches(msg, m.keys.PrevProfile):
+			return m.switchProfile(-1)
+
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
@@ -283,7 +323,11 @@ func (m Model) viewList() string {
 		}
 	}
 
-	tb := titleStyle.Render("codeherd")
+	title := "codeherd"
+	if m.registry != nil {
+		title = title + " · " + m.registry.Active
+	}
+	tb := titleStyle.Render(title)
 	if agentCount > 0 {
 		counter := dimStyle.Render(fmt.Sprintf("%d agents", agentCount))
 		pad := maxWidth - lipgloss.Width(tb) - lipgloss.Width(counter)
@@ -330,6 +374,15 @@ func (m Model) refreshCmd() tea.Cmd {
 	wtSvc := m.wtSvc
 	tmuxClient := m.tmuxClient
 	cfg := m.cfg
+	// Snapshot active profile by value rather than capturing m.registry: the
+	// registry pointer is shared and mutated in place by switchProfile, so
+	// reading m.registry.Active from inside the closure would race with an
+	// in-flight switch. Capturing the string locks the filter to the profile
+	// that was active when refreshCmd was invoked.
+	var activeProfile string
+	if m.registry != nil {
+		activeProfile = m.registry.Active
+	}
 
 	return func() tea.Msg {
 		data := refreshResult{
@@ -356,6 +409,13 @@ func (m Model) refreshCmd() tea.Cmd {
 			records, err := tmuxClient.ListSessions()
 			if err == nil {
 				for _, r := range records {
+					// When profile mode is on, only surface sessions tagged
+					// with the active profile. Untagged sessions from a
+					// non-profile world stay hidden until the user switches
+					// profiles off.
+					if activeProfile != "" && r.Profile != activeProfile {
+						continue
+					}
 					switch r.SessionType {
 					case semconv.SessionTypeShell:
 						data.shellSessions[r.CanonicalName] = r.ID
@@ -422,4 +482,52 @@ func (m Model) selectedItem() *Item {
 		return nil
 	}
 	return &sel
+}
+
+// switchProfile cycles the active profile by direction (+1 forward, -1 back).
+// On success, returns a new Model with cfg/wtSvc/projSvc swapped and issues
+// a refresh cmd. On failure, returns the receiver with statusMsg set.
+func (m Model) switchProfile(direction int) (Model, tea.Cmd) {
+	if m.registry == nil || len(m.registry.Names) < 2 {
+		return m, nil
+	}
+	idx := indexOf(m.registry.Names, m.registry.Active)
+	if idx < 0 {
+		return m, nil
+	}
+	n := len(m.registry.Names)
+	next := m.registry.Names[((idx+direction)%n+n)%n]
+
+	bundle, ok := m.profileCache[next]
+	if !ok {
+		cfg, err := config.LoadProfile(m.registry.ProfilesDir, next)
+		if err != nil {
+			m.statusMsg = fmt.Sprintf("profile switch failed: %v", err)
+			return m, nil
+		}
+		wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), m.tmuxClient, &hooks.NoOp{})
+		projSvc := project.NewService(cfg, project.NewRealGitRunner(), &hooks.NoOp{})
+		bundle = profileBundle{cfg: cfg, wtSvc: wtSvc, projSvc: projSvc}
+		m.profileCache[next] = bundle
+	}
+
+	m.cfg = bundle.cfg
+	m.wtSvc = bundle.wtSvc
+	m.projSvc = bundle.projSvc
+	// Intentional shared-pointer mutation: the registry is owned by the TUI
+	// singleton; reads from any Model value must see the currently active
+	// profile.
+	m.registry.Active = next
+	m = m.syncProfileKeyEnabled()
+	m.statusMsg = "Switched to profile " + next
+	return m, m.refreshCmd()
+}
+
+func indexOf(names []string, target string) int {
+	for i, n := range names {
+		if n == target {
+			return i
+		}
+	}
+	return -1
 }

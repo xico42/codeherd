@@ -431,3 +431,11 @@ unchanged.
 - Merging / inheriting config across profiles.
 - Renaming/deleting/creating profiles from the CLI (users edit files
   directly, same as today's main config).
+
+## Known Caveats
+
+- `shift+tab` is a common terminal/multiplexer binding (e.g. tmux
+  `send-prev`, some readline bindings). In practice tmux forwards it to
+  the running program fine, but users with custom bindings may see
+  conflicts. If it becomes a recurring complaint, the binding is easy to
+  swap in a follow-up.

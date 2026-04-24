@@ -103,6 +103,29 @@ tmux sessions:
   api-experiment   # another agent exploring an idea
 ```
 
+#### Session environment
+
+codeherd stamps a fixed set of `CODEHERD_*` environment variables on every session it starts (both agent and shell). Use them in the agent's `cmd`/`args` or in scripts the agent invokes:
+
+| Variable | Value | Notes |
+|---|---|---|
+| `CODEHERD_SESSION` | Canonical session name, e.g. `myapp-feature` | Always set |
+| `CODEHERD_PROJECT` | Project name from config | Always set |
+| `CODEHERD_BRANCH` | Branch name | Always set |
+| `CODEHERD_CLONE_DIR` | Absolute path to the main git clone | Set whenever the project has a valid `repo` URL. Needed by anything that runs `git` inside a worktree — git worktrees keep `.git` as a file that points back to the main clone |
+| `CODEHERD_WORKTREE_PATH` | Absolute path to the worktree root | Always set |
+| `CODEHERD_PROFILE` | Active profile name | Only set when a profile is active |
+
+These values win over any conflicting keys in `[agents.<name>].env` — the agent-level env is applied first, then codeherd's values are stamped on top.
+
+Example: sandbox an agent with `ai-jail` while keeping git operations working:
+
+```toml
+[agents.claude-sandboxed]
+cmd = "ai-jail"
+args = ["--rw-map", "$CODEHERD_WORKTREE_PATH", "--rw-map", "$CODEHERD_CLONE_DIR", "--", "claude"]
+```
+
 ## Lifecycle
 
 When you create a worktree and start a session, codeherd runs through a five-step lifecycle. Each step has optional pre/post hooks.

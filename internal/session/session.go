@@ -49,19 +49,29 @@ func NewService(tmux *tmux.Client, hook hooks.Hook) *Service {
 
 // StartRequest holds parameters for starting a new session.
 type StartRequest struct {
-	Project string
-	Branch  string
-	Path    string
-	Type    string // semconv.SessionTypeAgent or SessionTypeShell; defaults to SessionTypeAgent
-	Cmd     string
-	Env     map[string]string
-	Attach  bool
-	Profile string // "" when profiles are disabled
+	Project  string
+	Branch   string
+	Path     string
+	CloneDir string // main git clone for the project (exposed as CODEHERD_CLONE_DIR)
+	Type     string // semconv.SessionTypeAgent or SessionTypeShell; defaults to SessionTypeAgent
+	Cmd      string
+	Env      map[string]string
+	Attach   bool
+	Profile  string // "" when profiles are disabled
 }
 
-// Start creates a new detached tmux session for the given project/branch,
-// sets the CODEHERD_SESSION env var, and sets @codeherd_status and
-// @codeherd_started_at tmux options on the new session.
+// Start creates a new detached tmux session for the given project/branch and
+// sets @codeherd_status and @codeherd_started_at tmux options on the new session.
+// The session command runs with these env vars, which override any conflicting
+// keys in req.Env:
+//
+//   - CODEHERD_SESSION       canonical session name
+//   - CODEHERD_PROJECT       project name
+//   - CODEHERD_BRANCH        branch name
+//   - CODEHERD_CLONE_DIR     main git clone path (when req.CloneDir is set)
+//   - CODEHERD_WORKTREE_PATH worktree root
+//   - CODEHERD_PROFILE       profile name (only when req.Profile is non-empty)
+//
 // Returns ErrSessionExists if a session with the same canonical name and type already exists.
 // Returns ErrPathNotFound if Path does not exist on disk.
 func (s *Service) Start(req StartRequest) (string, error) {
@@ -111,7 +121,17 @@ func (s *Service) Start(req StartRequest) (string, error) {
 	for k, v := range req.Env {
 		env[k] = v
 	}
+	// Codeherd-stamped vars win over user-supplied Env.
 	env[semconv.SessionEnvVar] = canonicalName
+	env[semconv.HookAttrProject] = req.Project
+	env[semconv.HookAttrBranch] = req.Branch
+	env[semconv.HookAttrWorktreePath] = req.Path
+	if req.CloneDir != "" {
+		env[semconv.HookAttrCloneDir] = req.CloneDir
+	}
+	if req.Profile != "" {
+		env[semconv.EnvProfile] = req.Profile
+	}
 
 	if err := s.tmux.NewSessionWithEnv(tmuxName, req.Path, env, req.Cmd); err != nil {
 		return "", fmt.Errorf("creating tmux session: %w", err)

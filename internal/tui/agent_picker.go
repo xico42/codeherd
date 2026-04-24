@@ -112,12 +112,13 @@ func (p *agentPickerModel) submit() tea.Cmd {
 
 		sesSvc := session.NewService(pending.tmuxClient, h)
 		sessionID, err := sesSvc.Start(session.StartRequest{
-			Project: pending.project,
-			Branch:  pending.branch,
-			Path:    path,
-			Cmd:     agentCmd,
-			Env:     agent.Env,
-			Profile: pending.profile,
+			Project:  pending.project,
+			Branch:   pending.branch,
+			Path:     path,
+			CloneDir: projectCloneDir(cfg, pending.projCfg),
+			Cmd:      agentCmd,
+			Env:      agent.Env,
+			Profile:  pending.profile,
 		})
 		if err != nil {
 			return errMsg{err: err}

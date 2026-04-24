@@ -65,12 +65,13 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 				h := hooks.New(projCfg.Hooks)
 				sesSvc := session.NewService(tmuxClient, h)
 				sessionID, err := sesSvc.Start(session.StartRequest{
-					Project: project,
-					Branch:  branch,
-					Path:    path,
-					Cmd:     agentCmd,
-					Env:     agent.Env,
-					Profile: profile,
+					Project:  project,
+					Branch:   branch,
+					Path:     path,
+					CloneDir: projectCloneDir(cfg, projCfg),
+					Cmd:      agentCmd,
+					Env:      agent.Env,
+					Profile:  profile,
 				})
 				if err != nil {
 					return errMsg{err: err}
@@ -119,12 +120,13 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 
 				sesSvc := session.NewService(tmuxClient, h)
 				sessionID, err := sesSvc.Start(session.StartRequest{
-					Project: project,
-					Branch:  defaultBranch,
-					Path:    result.Path,
-					Cmd:     agentCmd,
-					Env:     agent.Env,
-					Profile: profile,
+					Project:  project,
+					Branch:   defaultBranch,
+					Path:     result.Path,
+					CloneDir: projectCloneDir(cfg, projCfg),
+					Cmd:      agentCmd,
+					Env:      agent.Env,
+					Profile:  profile,
 				})
 				if err != nil {
 					return errMsg{err: err}
@@ -230,12 +232,13 @@ func (m Model) shellAction() tea.Cmd {
 
 		sesSvc := session.NewService(tmuxClient, h)
 		sessionID, err := sesSvc.Start(session.StartRequest{
-			Project: project,
-			Branch:  branch,
-			Path:    path,
-			Type:    semconv.SessionTypeShell,
-			Cmd:     shellCmd,
-			Profile: profile,
+			Project:  project,
+			Branch:   branch,
+			Path:     path,
+			CloneDir: projectCloneDir(cfg, projCfg),
+			Type:     semconv.SessionTypeShell,
+			Cmd:      shellCmd,
+			Profile:  profile,
 		})
 		if err != nil {
 			return errMsg{err: err}
@@ -407,18 +410,30 @@ func (m Model) startSessionAfterCreate(msg worktreeCreatedMsg) tea.Cmd {
 		agentCmd := agent.Command()
 		sesSvc := session.NewService(tmuxClient, h)
 		sessionID, err := sesSvc.Start(session.StartRequest{
-			Project: msg.project,
-			Branch:  msg.branch,
-			Path:    msg.path,
-			Cmd:     agentCmd,
-			Env:     agent.Env,
-			Profile: profile,
+			Project:  msg.project,
+			Branch:   msg.branch,
+			Path:     msg.path,
+			CloneDir: projectCloneDir(cfg, projCfg),
+			Cmd:      agentCmd,
+			Env:      agent.Env,
+			Profile:  profile,
 		})
 		if err != nil {
 			return errMsg{err: err}
 		}
 		return attachMsg{session: sessionID}
 	}
+}
+
+// projectCloneDir returns the main git clone path for a project, or "" when
+// the project's repo URL can't be parsed. Matches the cmd/ helpers so the
+// CODEHERD_CLONE_DIR env var is either a valid path or absent.
+func projectCloneDir(cfg *config.Config, projCfg config.ProjectConfig) string {
+	repoPath, err := config.RepoPath(projCfg.Repo)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
 }
 
 // runFileCopyAndTemplate runs file copy and herd template processing for a worktree.

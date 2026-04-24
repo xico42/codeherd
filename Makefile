@@ -36,8 +36,12 @@ lint:
 clean:
 	rm -f $(BIN_NAME) coverage.out
 
+format:
+	gofmt -s -w .
+
 check: coverage test-integration lint build
 	@echo "All checks passed"
 
 setup: deps check
 	@echo "Setup complete"
+

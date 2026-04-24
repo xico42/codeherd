@@ -973,13 +973,13 @@ func TestStart_StampsCodeherdEnvVars(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"USER_VAR":                    "user-value",
-		semconv.SessionEnvVar:         "work-myapp-feature-x",
-		semconv.HookAttrProject:       "myapp",
-		semconv.HookAttrBranch:        "feature/x",
-		semconv.HookAttrWorktreePath:  wtDir,
-		semconv.HookAttrCloneDir:      "/home/u/projects/github.com/u/myapp",
-		semconv.EnvProfile:            "work",
+		"USER_VAR":                   "user-value",
+		semconv.SessionEnvVar:        "work-myapp-feature-x",
+		semconv.HookAttrProject:      "myapp",
+		semconv.HookAttrBranch:       "feature/x",
+		semconv.HookAttrWorktreePath: wtDir,
+		semconv.HookAttrCloneDir:     "/home/u/projects/github.com/u/myapp",
+		semconv.EnvProfile:           "work",
 	}
 	for k, v := range want {
 		if env[k] != v {

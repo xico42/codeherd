@@ -89,6 +89,12 @@ func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 
 	projCfg := cfg.Projects[project]
 	h := hooks.New(projCfg.Hooks)
+
+	var cloneDir string
+	if repoPath, rpErr := config.RepoPath(projCfg.Repo); rpErr == nil {
+		cloneDir = filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
+	}
+
 	svc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), h)
 	var result worktree.NewResult
 	var err error
@@ -104,8 +110,6 @@ func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 
 	// File copy
 	if len(projCfg.Files) > 0 {
-		repoPath, _ := config.RepoPath(projCfg.Repo)
-		cloneDir := filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
 		copySvc := filecopy.New(h)
 		attrs := map[string]string{
 			semconv.HookAttrProject:      project,
@@ -155,12 +159,13 @@ func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 
 		sesSvc := session.NewService(tmux.NewClient(tmux.NewRealRunner()), h)
 		sessionID, err := sesSvc.Start(session.StartRequest{
-			Project: project,
-			Branch:  branch,
-			Path:    result.Path,
-			Cmd:     agent.Command(),
-			Env:     agent.Env,
-			Attach:  true,
+			Project:  project,
+			Branch:   branch,
+			Path:     result.Path,
+			CloneDir: cloneDir,
+			Cmd:      agent.Command(),
+			Env:      agent.Env,
+			Attach:   true,
 		})
 		if err != nil {
 			fmt.Fprintln(cmd.OutOrStdout())

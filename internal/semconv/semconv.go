@@ -40,7 +40,10 @@ const (
 	HookPostSession  = "post-session"
 )
 
-// Hook attributes — environment variable names passed to hook commands.
+// Environment variable names exposed to hook commands and to the agent/shell
+// command running inside a codeherd tmux session. The HookAttr* aliases are
+// kept for callers that pass these as hook attributes; agent-session code
+// references them directly as env var names.
 const (
 	HookAttrProject      = "CODEHERD_PROJECT"
 	HookAttrBranch       = "CODEHERD_BRANCH"
@@ -48,6 +51,9 @@ const (
 	HookAttrCloneDir     = "CODEHERD_CLONE_DIR"
 	HookAttrWorktreePath = "CODEHERD_WORKTREE_PATH"
 	HookAttrSessionName  = "CODEHERD_SESSION_NAME"
+
+	// EnvProfile is only exported in session env, not as a hook attribute.
+	EnvProfile = "CODEHERD_PROFILE"
 )
 
 func FlattenBranch(branch string) string {

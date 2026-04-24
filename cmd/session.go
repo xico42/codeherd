@@ -243,17 +243,23 @@ func (c *CreateSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
 
+	var cloneDir string
+	if repoPath, rpErr := config.RepoPath(projCfg.Repo); rpErr == nil {
+		cloneDir = filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
+	}
+
 	tc := tmux.NewClient(tmux.NewRealRunner())
 	svc := session.NewService(tc, h)
 	sessionID, err := svc.Start(session.StartRequest{
-		Project: project,
-		Branch:  branch,
-		Path:    path,
-		Type:    sessionType,
-		Cmd:     sessionCmd,
-		Env:     sessionEnv,
-		Profile: profile,
-		Attach:  c.Attach,
+		Project:  project,
+		Branch:   branch,
+		Path:     path,
+		CloneDir: cloneDir,
+		Type:     sessionType,
+		Cmd:      sessionCmd,
+		Env:      sessionEnv,
+		Profile:  profile,
+		Attach:   c.Attach,
 	})
 	if err != nil {
 		fmt.Fprintln(cmd.OutOrStdout())

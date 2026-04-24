@@ -31,6 +31,30 @@ func findCall(calls [][]string, want ...string) bool {
 	return false
 }
 
+// newSessionEnv extracts the map of KEY=VALUE pairs passed via -e flags to the
+// tmux new-session call, or nil if no such call is in the recorded invocations.
+func newSessionEnv(calls [][]string) map[string]string {
+	for _, c := range calls {
+		if len(c) == 0 || c[0] != "new-session" {
+			continue
+		}
+		env := map[string]string{}
+		for i := 0; i < len(c)-1; i++ {
+			if c[i] != "-e" {
+				continue
+			}
+			kv := c[i+1]
+			eq := strings.Index(kv, "=")
+			if eq < 0 {
+				continue
+			}
+			env[kv[:eq]] = kv[eq+1:]
+		}
+		return env
+	}
+	return nil
+}
+
 // mockRunner implements tmux.Runner for testing.
 type mockRunner struct {
 	stdout   string
@@ -912,5 +936,159 @@ func TestStopByName_killsCorrectSession(t *testing.T) {
 	}
 	if !findCall(r2.calls, "kill-session", "-t", "work-a-main") {
 		t.Errorf("expected kill-session on work-a-main; got %v", r2.calls)
+	}
+}
+
+func TestStart_StampsCodeherdEnvVars(t *testing.T) {
+	r2 := &mockRunnerSequence{responses: []mockResponse{
+		{exitCode: 1},                 // list-sessions → no sessions
+		{exitCode: 0},                 // new-session → ok
+		{exitCode: 0},                 // set-option status
+		{exitCode: 0},                 // set-option started_at
+		{exitCode: 0},                 // set-option canonical_name
+		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0},                 // set-option @codeherd_profile (profile set)
+		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
+	}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc, &mockHook{})
+
+	wtDir := t.TempDir()
+	_, err := svc.Start(session.StartRequest{
+		Project:  "myapp",
+		Branch:   "feature/x",
+		Path:     wtDir,
+		CloneDir: "/home/u/projects/github.com/u/myapp",
+		Cmd:      "claude",
+		Env:      map[string]string{"USER_VAR": "user-value"},
+		Profile:  "work",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	env := newSessionEnv(r2.calls)
+	if env == nil {
+		t.Fatalf("no new-session call recorded; calls=%v", r2.calls)
+	}
+
+	want := map[string]string{
+		"USER_VAR":                    "user-value",
+		semconv.SessionEnvVar:         "work-myapp-feature-x",
+		semconv.HookAttrProject:       "myapp",
+		semconv.HookAttrBranch:        "feature/x",
+		semconv.HookAttrWorktreePath:  wtDir,
+		semconv.HookAttrCloneDir:      "/home/u/projects/github.com/u/myapp",
+		semconv.EnvProfile:            "work",
+	}
+	for k, v := range want {
+		if env[k] != v {
+			t.Errorf("env[%q] = %q, want %q", k, env[k], v)
+		}
+	}
+}
+
+func TestStart_CodeherdEnvWinsOverUserEnv(t *testing.T) {
+	r2 := &mockRunnerSequence{responses: []mockResponse{
+		{exitCode: 1},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0, stdout: "$1\n"},
+	}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc, &mockHook{})
+
+	wtDir := t.TempDir()
+	_, err := svc.Start(session.StartRequest{
+		Project:  "myapp",
+		Branch:   "feature",
+		Path:     wtDir,
+		CloneDir: "/real/clone",
+		Cmd:      "claude",
+		Env: map[string]string{
+			semconv.HookAttrProject:      "evil-project",
+			semconv.HookAttrBranch:       "evil-branch",
+			semconv.HookAttrWorktreePath: "/evil/path",
+			semconv.HookAttrCloneDir:     "/evil/clone",
+			semconv.SessionEnvVar:        "evil-session",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	env := newSessionEnv(r2.calls)
+	checks := map[string]string{
+		semconv.HookAttrProject:      "myapp",
+		semconv.HookAttrBranch:       "feature",
+		semconv.HookAttrWorktreePath: wtDir,
+		semconv.HookAttrCloneDir:     "/real/clone",
+		semconv.SessionEnvVar:        "myapp-feature",
+	}
+	for k, want := range checks {
+		if got := env[k]; got != want {
+			t.Errorf("env[%q] = %q, want %q (user env must not shadow codeherd)", k, got, want)
+		}
+	}
+}
+
+func TestStart_ProfileEnvOmittedWhenEmpty(t *testing.T) {
+	r2 := &mockRunnerSequence{responses: []mockResponse{
+		{exitCode: 1},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0, stdout: "$1\n"},
+	}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc, &mockHook{})
+
+	_, err := svc.Start(session.StartRequest{
+		Project: "myapp",
+		Branch:  "feature",
+		Path:    t.TempDir(),
+		Cmd:     "claude",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	env := newSessionEnv(r2.calls)
+	if _, ok := env[semconv.EnvProfile]; ok {
+		t.Errorf("CODEHERD_PROFILE must be absent when Profile is empty; got %q", env[semconv.EnvProfile])
+	}
+}
+
+func TestStart_CloneDirEnvOmittedWhenEmpty(t *testing.T) {
+	r2 := &mockRunnerSequence{responses: []mockResponse{
+		{exitCode: 1},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0, stdout: "$1\n"},
+	}}
+	tc := tmux.NewClient(r2)
+	svc := session.NewService(tc, &mockHook{})
+
+	_, err := svc.Start(session.StartRequest{
+		Project: "myapp",
+		Branch:  "feature",
+		Path:    t.TempDir(),
+		Cmd:     "claude",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	env := newSessionEnv(r2.calls)
+	if _, ok := env[semconv.HookAttrCloneDir]; ok {
+		t.Errorf("CODEHERD_CLONE_DIR must be absent when CloneDir is empty; got %q", env[semconv.HookAttrCloneDir])
 	}
 }

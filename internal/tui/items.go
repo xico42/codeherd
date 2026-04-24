@@ -41,10 +41,11 @@ func (i Item) FilterValue() string {
 // refreshResult holds raw data collected during a refresh cycle.
 type refreshResult struct {
 	worktrees     []wtEntry
-	agentSessions map[string]agentInfo // keyed by session name (project-branch)
+	agentSessions map[string]agentInfo // keyed by canonical session name
 	shellSessions map[string]string    // canonical session name → tmux session_id
 	projects      []projEntry
 	cloneDirs     map[string]string // project name -> clone dir path
+	profile       string            // active profile, "" when profile mode is off
 }
 
 type wtEntry struct {
@@ -73,7 +74,7 @@ func buildItems(data refreshResult) []list.Item {
 	for _, wt := range data.worktrees {
 		projectHasWorktree[wt.project] = true
 
-		sessionName := semconv.SessionName("", wt.project, wt.branch)
+		sessionName := semconv.SessionName(data.profile, wt.project, wt.branch)
 
 		shellID := data.shellSessions[sessionName]
 		item := Item{

@@ -28,6 +28,7 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 	cfg := m.cfg
 	project := sel.Project
 	branch := sel.Branch
+	profile := m.activeProfile()
 
 	switch sel.Group {
 	case groupAgent:
@@ -53,6 +54,7 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 			projCfg:    projCfg,
 			cfg:        cfg,
 			tmuxClient: tmuxClient,
+			profile:    profile,
 		}
 
 		if len(agents) == 1 {
@@ -68,6 +70,7 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 					Path:    path,
 					Cmd:     agentCmd,
 					Env:     agent.Env,
+					Profile: profile,
 				})
 				if err != nil {
 					return errMsg{err: err}
@@ -121,6 +124,7 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 					Path:    result.Path,
 					Cmd:     agentCmd,
 					Env:     agent.Env,
+					Profile: profile,
 				})
 				if err != nil {
 					return errMsg{err: err}
@@ -136,6 +140,7 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 			projCfg:    projCfg,
 			cfg:        cfg,
 			tmuxClient: tmuxClient,
+			profile:    profile,
 		})
 		m.screen = screenAgentPicker
 		return m, nil
@@ -178,6 +183,7 @@ func (m Model) shellAction() tea.Cmd {
 	branch := sel.Branch
 	path := sel.Path
 	shellSessionID := sel.ShellSessionID
+	profile := m.activeProfile()
 
 	return func() tea.Msg {
 		// For group 3 (project-only), clone + create worktree first.
@@ -229,6 +235,7 @@ func (m Model) shellAction() tea.Cmd {
 			Path:    path,
 			Type:    semconv.SessionTypeShell,
 			Cmd:     shellCmd,
+			Profile: profile,
 		})
 		if err != nil {
 			return errMsg{err: err}
@@ -345,13 +352,12 @@ func (m Model) confirmDeleteAgent() (tea.Model, tea.Cmd) {
 	m.confirm = nil
 	m.screen = screenList
 
-	sesSvc := m.sesSvc
-	project := target.Project
-	branch := target.Branch
+	tmuxClient := m.tmuxClient
+	agentID := target.AgentSessionID
 
 	return m, func() tea.Msg {
-		if target.AgentSessionID != "" {
-			_ = sesSvc.Stop(project, branch, semconv.SessionTypeAgent)
+		if agentID != "" {
+			_ = tmuxClient.KillSession(agentID)
 		}
 		return m.refreshCmd()()
 	}
@@ -384,6 +390,7 @@ func (m Model) startSessionAfterCreate(msg worktreeCreatedMsg) tea.Cmd {
 	cfg := m.cfg
 	tmuxClient := m.tmuxClient
 	projCfg := cfg.Projects[msg.project]
+	profile := m.activeProfile()
 
 	return func() tea.Msg {
 		agent, err := cfg.AgentByName(msg.agent)
@@ -405,6 +412,7 @@ func (m Model) startSessionAfterCreate(msg worktreeCreatedMsg) tea.Cmd {
 			Path:    msg.path,
 			Cmd:     agentCmd,
 			Env:     agent.Env,
+			Profile: profile,
 		})
 		if err != nil {
 			return errMsg{err: err}

@@ -388,6 +388,7 @@ func (m Model) refreshCmd() tea.Cmd {
 		data := refreshResult{
 			agentSessions: make(map[string]agentInfo),
 			shellSessions: make(map[string]string),
+			profile:       activeProfile,
 		}
 
 		// 1. Worktrees
@@ -473,6 +474,15 @@ func (m Model) switchClientCmd(session string) tea.Cmd {
 		}
 		return nil
 	}
+}
+
+// activeProfile returns the currently active profile, or "" when profile
+// mode is off. Safe to call when registry is nil.
+func (m Model) activeProfile() string {
+	if m.registry == nil {
+		return ""
+	}
+	return m.registry.Active
 }
 
 // selectedItem returns the currently selected Item, or nil.

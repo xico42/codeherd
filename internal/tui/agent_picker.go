@@ -23,6 +23,7 @@ type agentPickerPending struct {
 	projCfg    config.ProjectConfig
 	cfg        *config.Config
 	tmuxClient *tmux.Client
+	profile    string // active profile at the time of picker open, "" when disabled
 }
 
 // agentPickerModel shows a compact list of named agents.
@@ -116,6 +117,7 @@ func (p *agentPickerModel) submit() tea.Cmd {
 			Path:    path,
 			Cmd:     agentCmd,
 			Env:     agent.Env,
+			Profile: pending.profile,
 		})
 		if err != nil {
 			return errMsg{err: err}

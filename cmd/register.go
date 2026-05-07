@@ -4,7 +4,7 @@ import "github.com/spf13/cobra"
 
 // registerCommands builds the verb-first command tree on the given root.
 // Each verb (list/create/delete/show/clone/attach) is a bare grouper
-// hosting its subject commands; template is a root-level verb.
+// hosting its subject commands; run and template are root-level verbs.
 func registerCommands(root *cobra.Command) {
 	listCmd := &cobra.Command{Use: "list", Short: "List resources"}
 	createCmd := &cobra.Command{Use: "create", Short: "Create resources"}
@@ -26,5 +26,9 @@ func registerCommands(root *cobra.Command) {
 	attachCmd.AddCommand((&AttachSessionCmd{}).Cobra())
 
 	root.AddCommand(listCmd, createCmd, deleteCmd, showCmd, cloneCmd, attachCmd)
+
+	runCmd := &RunAgentCmd{}
+	root.AddCommand(runCmd.Cobra())
+
 	root.AddCommand((&TemplateCmd{}).Cobra())
 }

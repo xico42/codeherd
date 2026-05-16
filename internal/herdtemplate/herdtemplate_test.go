@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xico42/codeherd/internal/hooks"
@@ -244,34 +245,42 @@ func (m *mockHook) Trigger(name string, attrs map[string]string, workDir string)
 	return nil
 }
 
-func TestDeterministicPort_Idempotent(t *testing.T) {
-	p1 := DeterministicPort("myapp", "feature", "api")
-	p2 := DeterministicPort("myapp", "feature", "api")
+func TestDeterministicPortWithSeed_Idempotent(t *testing.T) {
+	p1 := DeterministicPortWithSeed("myapp", "feature", "api", "")
+	p2 := DeterministicPortWithSeed("myapp", "feature", "api", "")
 	if p1 != p2 {
 		t.Errorf("not idempotent: %d != %d", p1, p2)
 	}
 }
 
-func TestDeterministicPort_InRange(t *testing.T) {
-	p := DeterministicPort("myapp", "feature", "api")
+func TestDeterministicPortWithSeed_InRange(t *testing.T) {
+	p := DeterministicPortWithSeed("myapp", "feature", "api", "")
 	if p < 10000 || p > 59999 {
 		t.Errorf("port %d out of range 10000-59999", p)
 	}
 }
 
-func TestDeterministicPort_DifferentNames(t *testing.T) {
-	p1 := DeterministicPort("myapp", "feature", "api")
-	p2 := DeterministicPort("myapp", "feature", "db")
+func TestDeterministicPortWithSeed_DifferentNames(t *testing.T) {
+	p1 := DeterministicPortWithSeed("myapp", "feature", "api", "")
+	p2 := DeterministicPortWithSeed("myapp", "feature", "db", "")
 	if p1 == p2 {
 		t.Errorf("same port %d for different names", p1)
 	}
 }
 
-func TestDeterministicPort_NullByteSeparation(t *testing.T) {
-	p1 := DeterministicPort("ab", "cd", "x")
-	p2 := DeterministicPort("a", "bcd", "x")
+func TestDeterministicPortWithSeed_NullByteSeparation(t *testing.T) {
+	p1 := DeterministicPortWithSeed("ab", "cd", "x", "")
+	p2 := DeterministicPortWithSeed("a", "bcd", "x", "")
 	if p1 == p2 {
 		t.Errorf("null-byte separation failed: both hashed to %d", p1)
+	}
+}
+
+func TestDeterministicPortWithSeed_DifferentSeeds(t *testing.T) {
+	p1 := DeterministicPortWithSeed("myapp", "feature", "api", "")
+	p2 := DeterministicPortWithSeed("myapp", "feature", "api", "alt")
+	if p1 == p2 {
+		t.Errorf("same port %d for different seeds", p1)
 	}
 }
 
@@ -476,5 +485,161 @@ func TestProcess_ReturnsProcessResult(t *testing.T) {
 
 	if len(result.Files) != 2 {
 		t.Fatalf("expected 2 rendered files, got %d", len(result.Files))
+	}
+}
+
+func TestProcess_PortFunction_StableAcrossFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.env.herd"), []byte(`{{ port "shared" }}`), 0o644); err != nil {
+		t.Fatalf("WriteFile a: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.env.herd"), []byte(`{{ port "shared" }}`), 0o644); err != nil {
+		t.Fatalf("WriteFile b: %v", err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	_, err := svc.Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "feature",
+		WorktreePath: dir,
+		SessionName:  "myapp-feature",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	a, err := os.ReadFile(filepath.Join(dir, "a.env"))
+	if err != nil {
+		t.Fatalf("reading a: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "b.env"))
+	if err != nil {
+		t.Fatalf("reading b: %v", err)
+	}
+	if string(a) != string(b) {
+		t.Errorf("port differs across files: a=%q b=%q", string(a), string(b))
+	}
+}
+
+// TestProcess_PortCollision_ResolvedByAltHash uses a known h1-colliding pair
+// under the seeded key format: project="testproj", branch="testbranch", names
+// "svc295" and "svc758" both produce h1=58792. Their h2 values differ
+// (svc295=13363, svc758=35555), so the allocator resolves the conflict via h2
+// without falling back to linear probing.
+func TestProcess_PortCollision_ResolvedByAltHash(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := `svc295={{ port "svc295" }}` + "\n" + `svc758={{ port "svc758" }}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "ports.env.herd"), []byte(tmpl), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	_, err := svc.Process(ProcessContext{
+		Project:      "testproj",
+		Branch:       "testbranch",
+		WorktreePath: dir,
+		SessionName:  "test-session",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "ports.env"))
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	want := "svc295=58792\nsvc758=35555\n"
+	if string(data) != want {
+		t.Errorf("output = %q, want %q", string(data), want)
+	}
+}
+
+// TestPortAllocator_FallsBackToProbe pre-occupies both h1 and h2 of a chosen
+// name with sentinel entries, then asserts that allocate falls through to the
+// linear-probe path and returns a slot distinct from h1 and h2.
+func TestPortAllocator_FallsBackToProbe(t *testing.T) {
+	project, branch, name := "probetest", "branch", "svc295"
+	h1 := DeterministicPortWithSeed(project, branch, name, "")
+	h2 := DeterministicPortWithSeed(project, branch, name, "alt")
+
+	alloc := newPortAllocator(project, branch)
+	alloc.byPort[h1] = "sentinel-h1"
+	alloc.byName["sentinel-h1"] = h1
+	if h2 != h1 {
+		alloc.byPort[h2] = "sentinel-h2"
+		alloc.byName["sentinel-h2"] = h2
+	}
+
+	p, err := alloc.allocate(name)
+	if err != nil {
+		t.Fatalf("allocate: %v", err)
+	}
+	if p == h1 || p == h2 {
+		t.Errorf("probed port %d should differ from h1=%d and h2=%d", p, h1, h2)
+	}
+	if p < portMin || p > portMax {
+		t.Errorf("probed port %d out of range [%d, %d]", p, portMin, portMax)
+	}
+}
+
+// TestPortAllocator_ProbeWraps fills every slot in [portMin, portMax] with
+// sentinels except one chosen freeSlot positioned immediately behind h1 (with
+// wrap). The probe must walk forward from h1, pass portMax, wrap to portMin,
+// and continue until it reaches freeSlot — proving the wrap branch works.
+func TestPortAllocator_ProbeWraps(t *testing.T) {
+	project, branch, name := "wraptest", "branch", "probetest"
+	h1 := DeterministicPortWithSeed(project, branch, name, "")
+	h2 := DeterministicPortWithSeed(project, branch, name, "alt")
+
+	freeSlot := h1 - 1
+	if freeSlot < portMin {
+		freeSlot = portMax
+	}
+	// If the chosen freeSlot happens to equal h2, the allocator would short-
+	// circuit there via the h2 path and never enter the probe loop. Shift one
+	// slot further back (with wrap) to keep the probe path under test.
+	if h2 == freeSlot {
+		freeSlot--
+		if freeSlot < portMin {
+			freeSlot = portMax
+		}
+	}
+
+	alloc := newPortAllocator(project, branch)
+	for p := portMin; p <= portMax; p++ {
+		if p == freeSlot {
+			continue
+		}
+		alloc.byPort[p] = fmt.Sprintf("sentinel-%d", p)
+	}
+
+	p, err := alloc.allocate(name)
+	if err != nil {
+		t.Fatalf("allocate: %v", err)
+	}
+	if p != freeSlot {
+		t.Errorf("expected probed port %d (free slot), got %d", freeSlot, p)
+	}
+}
+
+// TestPortAllocator_Exhausted_Errors fills every slot in [portMin, portMax]
+// with sentinel entries and asserts that allocate returns a non-nil error
+// mentioning the requested name. Practically unreachable in real renders but
+// guards the "we cannot guarantee non-collision" branch the spec requires.
+func TestPortAllocator_Exhausted_Errors(t *testing.T) {
+	alloc := newPortAllocator("exhausttest", "branch")
+	for p := portMin; p <= portMax; p++ {
+		alloc.byPort[p] = fmt.Sprintf("sentinel-%d", p)
+	}
+
+	_, err := alloc.allocate("anything")
+	if err == nil {
+		t.Fatal("expected error when allocator is exhausted, got nil")
+	}
+	if !strings.Contains(err.Error(), "exhausted") {
+		t.Errorf("error %q should mention exhaustion", err.Error())
+	}
+	if !strings.Contains(err.Error(), `"anything"`) {
+		t.Errorf("error %q should mention the requested name", err.Error())
 	}
 }

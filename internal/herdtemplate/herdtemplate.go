@@ -13,15 +13,77 @@ import (
 	"github.com/xico42/codeherd/internal/semconv"
 )
 
-const herdSuffix = ".herd"
+const (
+	herdSuffix = ".herd"
+	portMin    = 10000
+	portMax    = 59999
+	portRange  = portMax - portMin + 1
+)
 
-// DeterministicPort returns a stable port for the given project/branch/name.
-// Uses FNV-1a 32-bit hash with null-byte separators. Range: 10000–59999.
-func DeterministicPort(project, branch, name string) int {
-	key := project + "\x00" + branch + "\x00" + name
+// DeterministicPortWithSeed returns a stable port in [10000, 59999] for the
+// given project / branch / name / seed. Different seeds produce independent
+// outputs for the same (project, branch, name), enabling multi-hash allocation
+// strategies and manual disambiguation of collisions.
+func DeterministicPortWithSeed(project, branch, name, seed string) int {
+	key := project + "\x00" + branch + "\x00" + name + "\x00" + seed
 	h := fnv.New32a()
 	h.Write([]byte(key))
-	return int(h.Sum32()%50000) + 10000
+	return int(h.Sum32()%portRange) + portMin
+}
+
+// portAllocator hands out deterministic ports for one Process() call while
+// resolving collisions. Each name first tries h1 (empty seed), then h2 (seed
+// "alt"), then linear-probes forward with wrap. Returns an error only when
+// every slot in [portMin, portMax] is occupied. State is discarded after the
+// render completes.
+type portAllocator struct {
+	project, branch string
+	byName          map[string]int
+	byPort          map[int]string
+}
+
+func newPortAllocator(project, branch string) *portAllocator {
+	return &portAllocator{
+		project: project,
+		branch:  branch,
+		byName:  make(map[string]int),
+		byPort:  make(map[int]string),
+	}
+}
+
+func (a *portAllocator) allocate(name string) (int, error) {
+	if p, ok := a.byName[name]; ok {
+		return p, nil
+	}
+	h1 := DeterministicPortWithSeed(a.project, a.branch, name, "")
+	if _, taken := a.byPort[h1]; !taken {
+		a.byName[name] = h1
+		a.byPort[h1] = name
+		return h1, nil
+	}
+	h2 := DeterministicPortWithSeed(a.project, a.branch, name, "alt")
+	if h2 != h1 {
+		if _, taken := a.byPort[h2]; !taken {
+			a.byName[name] = h2
+			a.byPort[h2] = name
+			return h2, nil
+		}
+	}
+	p := h1
+	for {
+		p++
+		if p > portMax {
+			p = portMin
+		}
+		if p == h1 {
+			return 0, fmt.Errorf("port allocator exhausted: no free slot in [%d, %d] for %q", portMin, portMax, name)
+		}
+		if _, taken := a.byPort[p]; !taken {
+			a.byName[name] = p
+			a.byPort[p] = name
+			return p, nil
+		}
+	}
 }
 
 // ProcessContext holds values available to .herd templates.
@@ -74,9 +136,10 @@ func (s *Service) Process(ctx ProcessContext, attrs map[string]string) (ProcessR
 		}
 	}
 
+	alloc := newPortAllocator(ctx.Project, ctx.Branch)
 	funcMap := template.FuncMap{
-		"port": func(name string) int {
-			return DeterministicPort(ctx.Project, ctx.Branch, name)
+		"port": func(name string) (int, error) {
+			return alloc.allocate(name)
 		},
 		"env": func(args ...string) string {
 			if len(args) == 0 {

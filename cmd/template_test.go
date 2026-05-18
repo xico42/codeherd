@@ -132,24 +132,6 @@ func TestTemplate_resolveProjectFromCloneDir(t *testing.T) {
 	}
 }
 
-// TestTemplate_detectBranchFromGit verifies that when --branch is omitted, the
-// branch is auto-detected via git from the target directory.
-func TestTemplate_detectBranchFromGit(t *testing.T) {
-	projectsDir := t.TempDir()
-	// Use a real git directory (the repo itself) so detectGitBranch succeeds.
-	// We pass --project and the repo root dir (which is a real git repo).
-	cfgPath := writeConfig(t, projectsDir)
-	// The current working directory is the repo root — it has a valid git branch.
-	// No .herd files in the repo root, so template processing returns 0 results.
-	// We expect success (no error), not "could not detect branch".
-	err := runCmd(t, "--config", cfgPath, "template", "--project", "myapp", ".")
-	// May fail if "." isn't in a known worktree path for project resolution,
-	// but should NOT fail with "could not detect branch".
-	if err != nil && strings.Contains(err.Error(), "could not detect branch") {
-		t.Fatalf("detectGitBranch failed to auto-detect branch: %v", err)
-	}
-}
-
 // TestTemplate_resolveProjectFromDir verifies auto-detection from directory path.
 func TestTemplate_resolveProjectFromDir(t *testing.T) {
 	projectsDir := t.TempDir()

@@ -3,7 +3,7 @@ INSTALL   := $(HOME)/.local/bin/$(BIN_NAME)
 LDFLAGS   := -ldflags "-s -w -X main.version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)"
 COVERAGE_THRESHOLD := 80
 
-.PHONY: build install test test-integration coverage lint clean deps setup check
+.PHONY: build install test test-integration coverage lint clean deps setup check vendor tools
 
 deps:
 	go mod download
@@ -31,7 +31,13 @@ coverage:
 	           else { print "OK: " cov "% >= " thr "%" } }'
 
 lint:
-	golangci-lint run ./...
+	go tool golangci-lint run ./...
+
+vendor:
+	go mod vendor
+
+tools:
+	go install tool
 
 clean:
 	rm -f $(BIN_NAME) coverage.out
@@ -42,6 +48,6 @@ format:
 check: coverage test-integration lint build
 	@echo "All checks passed"
 
-setup: deps check
+setup: deps vendor tools check
 	@echo "Setup complete"
 

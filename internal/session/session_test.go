@@ -96,12 +96,11 @@ func newService(t *testing.T, r *mockRunner) *session.Service {
 func TestStart_OK(t *testing.T) {
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 1},                 // list-sessions → no sessions (exit 1 = empty)
-		{exitCode: 0},                 // new-session → ok
+		{exitCode: 0, stdout: "$1\n"}, // new-session → ok, returns session_id via -P -F
 		{exitCode: 0},                 // set-option status
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
-		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
 	}}
 	tc := tmux.NewClient(r2)
 	svc := session.NewService(tc, &mockHook{})
@@ -120,8 +119,8 @@ func TestStart_OK(t *testing.T) {
 	if sessionID != "$1" {
 		t.Errorf("Start() sessionID = %q, want $1", sessionID)
 	}
-	if len(r2.calls) != 7 {
-		t.Errorf("expected 7 tmux calls, got %d: %v", len(r2.calls), r2.calls)
+	if len(r2.calls) != 6 {
+		t.Errorf("expected 6 tmux calls, got %d: %v", len(r2.calls), r2.calls)
 	}
 }
 
@@ -538,20 +537,18 @@ func TestService_List_IncludesShellSessions(t *testing.T) {
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		// --- First Start (agent) ---
 		{exitCode: 1},                 // list-sessions → no sessions
-		{exitCode: 0},                 // new-session
+		{exitCode: 0, stdout: "$1\n"}, // new-session → returns session_id via -P -F
 		{exitCode: 0},                 // set-option status
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
-		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
 		// --- Second Start (shell) ---
 		{exitCode: 0, stdout: "$1\tapp-main\tapp-main\tagent\trunning\t\t\n"},
-		{exitCode: 0},                 // new-session
+		{exitCode: 0, stdout: "$2\n"}, // new-session → returns session_id via -P -F
 		{exitCode: 0},                 // set-option status
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
-		{exitCode: 0, stdout: "$2\n"}, // display-message → session_id
 		// --- List() ---
 		{exitCode: 0, stdout: "$1\tapp-main\tapp-main\tagent\trunning\t\t\n" +
 			"$2\tapp-main~sh\tapp-main\tshell\trunning\t\t\n"},
@@ -657,14 +654,11 @@ func TestStart_StatError(t *testing.T) {
 }
 
 func TestStart_SessionIDError(t *testing.T) {
+	// Now that the session ID is captured via -P -F on new-session, a failure
+	// is modelled by new-session itself returning a non-zero exit code.
 	r2 := &mockRunnerSequence{responses: []mockResponse{
-		{exitCode: 1}, // list-sessions → no sessions
-		{exitCode: 0}, // new-session → ok
-		{exitCode: 0}, // set-option status
-		{exitCode: 0}, // set-option started_at
-		{exitCode: 0}, // set-option canonical_name
-		{exitCode: 0}, // set-option session_type
-		{exitCode: 1}, // display-message → fails
+		{exitCode: 1},                        // list-sessions → no sessions
+		{exitCode: 1, stderr: "tmux failed"}, // new-session → fails (covers the old SessionID error path)
 	}}
 	tc := tmux.NewClient(r2)
 	svc := session.NewService(tc, &mockHook{})
@@ -676,33 +670,31 @@ func TestStart_SessionIDError(t *testing.T) {
 		Cmd:     "claude",
 	})
 	if err == nil {
-		t.Fatal("expected error when SessionID fails")
+		t.Fatal("expected error when new-session fails")
 	}
 }
 
 func TestService_Start_ShellAndAgentCoexist(t *testing.T) {
 	path := t.TempDir()
 
-	// Each Start calls: list-sessions, new-session, set-option x4, display-message (session_id).
-	// Two Starts = 14 calls total. Third Start (duplicate agent) only calls list-sessions.
+	// Each Start calls: list-sessions, new-session (-P -F returns ID), set-option x4.
+	// Two Starts = 12 calls total. Third Start (duplicate agent) only calls list-sessions.
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		// --- First Start (agent) ---
 		{exitCode: 1},                 // list-sessions → no sessions
-		{exitCode: 0},                 // new-session
+		{exitCode: 0, stdout: "$1\n"}, // new-session → session_id via -P -F
 		{exitCode: 0},                 // set-option status
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
-		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
 		// --- Second Start (shell) ---
 		// list-sessions returns the existing agent session; shell has different type so no conflict
 		{exitCode: 0, stdout: "$1\tapp-main\tapp-main\tagent\trunning\t\t\n"},
-		{exitCode: 0},                 // new-session
+		{exitCode: 0, stdout: "$2\n"}, // new-session → session_id via -P -F
 		{exitCode: 0},                 // set-option status
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
-		{exitCode: 0, stdout: "$2\n"}, // display-message → session_id
 		// --- Third Start (duplicate agent) ---
 		// list-sessions returns both sessions; agent canonical name matches → ErrSessionExists
 		{exitCode: 0, stdout: "$1\tapp-main\tapp-main\tagent\trunning\t\t\n" +
@@ -739,12 +731,11 @@ func TestService_Start_ShellAndAgentCoexist(t *testing.T) {
 func TestStart_TriggersHooks(t *testing.T) {
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 1},                 // list-sessions → no sessions
-		{exitCode: 0},                 // new-session → ok
+		{exitCode: 0, stdout: "$1\n"}, // new-session → session_id via -P -F
 		{exitCode: 0},                 // set-option status
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
-		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
 	}}
 	tc := tmux.NewClient(r2)
 	hookMock := &mockHook{}
@@ -777,12 +768,11 @@ func TestService_Show_ShellType(t *testing.T) {
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		// --- Start (shell) ---
 		{exitCode: 1},                 // list-sessions → no sessions
-		{exitCode: 0},                 // new-session
+		{exitCode: 0, stdout: "$1\n"}, // new-session → session_id via -P -F
 		{exitCode: 0},                 // set-option status
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
-		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
 		// --- Show(shell) ---
 		{exitCode: 0, stdout: "$1\tapp-main~sh\tapp-main\tshell\trunning\t\t\n"},
 		// --- Show(agent) ---
@@ -815,16 +805,15 @@ func TestService_Show_ShellType(t *testing.T) {
 
 func TestStart_writesProfileOption_whenSet(t *testing.T) {
 	// Same response shape as TestStart_OK, plus one extra set-option
-	// for @codeherd_profile. 8 responses now instead of 7.
+	// for @codeherd_profile. 7 responses instead of 6.
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 1},                 // list-sessions → no sessions
-		{exitCode: 0},                 // new-session
+		{exitCode: 0, stdout: "$1\n"}, // new-session → session_id via -P -F
 		{exitCode: 0},                 // set-option status
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
 		{exitCode: 0},                 // set-option @codeherd_profile (new)
-		{exitCode: 0, stdout: "$1\n"}, // display-message → session_id
 	}}
 	tc := tmux.NewClient(r2)
 	svc := session.NewService(tc, &mockHook{})
@@ -848,15 +837,14 @@ func TestStart_writesProfileOption_whenSet(t *testing.T) {
 }
 
 func TestStart_emptyProfile_noProfileOptionWritten(t *testing.T) {
-	// 7 responses — no extra @codeherd_profile set-option.
+	// 6 responses — no extra @codeherd_profile set-option.
 	r2 := &mockRunnerSequence{responses: []mockResponse{
 		{exitCode: 1},
+		{exitCode: 0, stdout: "$1\n"}, // new-session → session_id via -P -F
 		{exitCode: 0},
 		{exitCode: 0},
 		{exitCode: 0},
 		{exitCode: 0},
-		{exitCode: 0},
-		{exitCode: 0, stdout: "$1\n"},
 	}}
 	tc := tmux.NewClient(r2)
 	svc := session.NewService(tc, &mockHook{})

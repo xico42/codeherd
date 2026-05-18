@@ -883,12 +883,11 @@ func TestShellAction_worktreeItem_sessionCreated(t *testing.T) {
 	runner := &mockTmuxRunner{
 		responses: []mockTmuxResponse{
 			{stdout: "", exitCode: 1},      // list-sessions → no sessions (exit 1 = empty)
-			{stdout: "", exitCode: 0},      // new-session-with-env
+			{stdout: "$99\n", exitCode: 0}, // new-session-with-env → session_id via -P -F
 			{stdout: "", exitCode: 0},      // set-option @codeherd_status
 			{stdout: "", exitCode: 0},      // set-option @codeherd_started_at
 			{stdout: "", exitCode: 0},      // set-option @codeherd_canonical_name
 			{stdout: "", exitCode: 0},      // set-option @codeherd_session_type
-			{stdout: "$99\n", exitCode: 0}, // display-message → session_id
 		},
 	}
 	client := tmux.NewClient(runner)

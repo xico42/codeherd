@@ -133,7 +133,10 @@ func (s *Service) Start(req StartRequest) (string, error) {
 		env[semconv.EnvProfile] = req.Profile
 	}
 
-	if err := s.tmux.NewSessionWithEnv(tmuxName, req.Path, env, req.Cmd); err != nil {
+	// Capture the stable session ID atomically at creation; a separate
+	// display-message round-trip would race with short-lived commands (e.g. "true").
+	id, err := s.tmux.NewSessionWithEnv(tmuxName, req.Path, env, req.Cmd)
+	if err != nil {
 		return "", fmt.Errorf("creating tmux session: %w", err)
 	}
 
@@ -144,12 +147,6 @@ func (s *Service) Start(req StartRequest) (string, error) {
 	_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionSessionType, req.Type)
 	if req.Profile != "" {
 		_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionProfile, req.Profile)
-	}
-
-	// Get the stable session ID (unaffected by renames).
-	id, err := s.tmux.SessionID(tmuxName)
-	if err != nil {
-		return "", fmt.Errorf("getting session id: %w", err)
 	}
 
 	if err := s.hook.Trigger(semconv.HookPostSession, attrs, req.Path); err != nil {

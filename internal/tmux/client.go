@@ -79,9 +79,11 @@ func (c *Client) NewSessionWithCmd(name, dir, cmd string) error {
 }
 
 // NewSessionWithEnv creates a detached tmux session with environment variables
-// and an initial command.
-func (c *Client) NewSessionWithEnv(name, dir string, env map[string]string, cmd string) error {
-	args := []string{"new-session", "-d", "-s", name, "-c", dir}
+// and an initial command. It returns the stable session ID (e.g. "$1") captured
+// atomically at creation via -P -F, so callers get the ID even when the
+// session command exits before a separate display-message round-trip could run.
+func (c *Client) NewSessionWithEnv(name, dir string, env map[string]string, cmd string) (string, error) {
+	args := []string{"new-session", "-d", "-s", name, "-c", dir, "-P", "-F", "#{session_id}"}
 	// Sort keys for deterministic arg order (testability).
 	keys := make([]string, 0, len(env))
 	for k := range env {
@@ -92,14 +94,14 @@ func (c *Client) NewSessionWithEnv(name, dir string, env map[string]string, cmd 
 		args = append(args, "-e", k+"="+env[k])
 	}
 	args = append(args, cmd)
-	_, stderr, code, err := c.runner.Run(args...)
+	stdout, stderr, code, err := c.runner.Run(args...)
 	if err != nil {
-		return fmt.Errorf("tmux new-session: %w", err)
+		return "", fmt.Errorf("tmux new-session: %w", err)
 	}
 	if code != 0 {
-		return fmt.Errorf("tmux new-session: %s", strings.TrimSpace(stderr))
+		return "", fmt.Errorf("tmux new-session: %s", strings.TrimSpace(stderr))
 	}
-	return nil
+	return strings.TrimSpace(stdout), nil
 }
 
 // GetOption reads a tmux user-defined option from a session.

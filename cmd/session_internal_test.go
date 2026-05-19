@@ -369,6 +369,20 @@ func TestCreateSession_shell_existingWorktree(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
+	// Isolate tmux to a per-test socket so the test's transient session does
+	// not appear on the developer's outer tmux server. See useIsolatedTmux
+	// for the full rationale; we inline a smaller version here because that
+	// helper lives in package cmd_test and this test is package cmd.
+	socket := filepath.Join(t.TempDir(), "tmux.sock")
+	t.Setenv(tmux.SocketEnvVar, socket)
+	t.Setenv("TMUX", "")
+	probe := exec.Command("tmux", "-S", socket, "new-session", "-d", "-s", "__probe__", "sleep", "30")
+	if out, err := probe.CombinedOutput(); err != nil {
+		t.Skipf("tmux daemonize unavailable: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "-S", socket, "kill-server").Run()
+	})
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
 	worktreePath := cloneDir + "__worktrees" + string(os.PathSeparator) + "feat"
@@ -401,8 +415,8 @@ func TestCreateSession_shell_existingWorktree(t *testing.T) {
 	// non-sentinel error. Either way, we should reach the "Starting session..."
 	// print, confirming the worktree and agent-resolution paths were traversed.
 	runErr := c.Run(cobraCmd, []string{"myapp", "feat"})
-	// Clean up any created tmux session.
-	_ = exec.Command("tmux", "kill-session", "-t", "myapp-feat~sh").Run()
+	// The per-test tmux server tear-down in t.Cleanup will remove any
+	// session created above; no explicit kill-session needed.
 
 	if !strings.Contains(out.String(), "Starting session myapp-feat~sh") {
 		t.Errorf("output %q does not show shell session name (runErr=%v)", out.String(), runErr)

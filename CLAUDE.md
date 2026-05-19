@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-`codeherd` is a personal Go CLI for managing parallel agentic coding sessions. It organizes projects and git worktrees, configures per-agent environments with deterministic port allocation, and orchestrates tmux sessions where AI coding agents run independently. Full context in `docs/project.md`.
+`codeherd` is a Go CLI for managing parallel agentic coding sessions. It organizes projects and git worktrees, configures per-agent environments with deterministic port allocation, and orchestrates tmux sessions where AI coding agents run independently. Full context in `docs/project.md`.
 
 ## Build and development commands
 
@@ -29,14 +29,6 @@ go test ./internal/session/...
 Build with version embedded (done automatically via Makefile):
 ```bash
 go build -ldflags "-s -w -X main.version=$(git describe --tags --always)" -o ch .
-```
-
-## Git worktrees
-
-Worktrees for this project live at `~/.config/superpowers/worktrees/remote-dev/<branch-name>`.
-
-```bash
-git worktree add ~/.config/superpowers/worktrees/remote-dev/<branch> -b <branch>
 ```
 
 ## Coverage requirement
@@ -100,18 +92,5 @@ All commands run locally — they execute git/tmux/filesystem directly on whatev
 - **`syscall.Exec` for interactive commands**: `attach session`, `create worktree --attach`, and related commands replace the process rather than spawning a child
 - **Local execution**: all session/project/worktree commands run git/tmux via `os/exec` on the local machine — no SSH indirection
 - **Integration tests**: tagged with `//go:build integration` and run separately via `make test-integration`
+- **Tmux isolation in tests**: tests that touch a real tmux server must isolate it. Set `CODEHERD_TMUX_SOCKET` to a path under `t.TempDir()` (the `internal/tmux` `RealRunner` reads this env var and prepends `-S <path>` to every tmux call), also clear `$TMUX` so tmux does not think it is nested, and probe with a throwaway `tmux -S <socket> new-session` — `t.Skip` if it fails so sandboxed CI environments do not flake. Cleanup must `tmux -S <socket> kill-server`. The `cmd_test` package exposes `useIsolatedTmux(t)` + `tmuxCmd(t, args...)` helpers; tests in `package cmd` inline the same setup. Never call bare `exec.Command("tmux", …)` from a test — it will leak into the developer's outer tmux server and collide with parallel test runs.
 
-### What's implemented
-
-- **Project**: `list project`, `show project <name>`, `clone project [<name>] [--all]`
-- **Worktree**: `list worktree`, `create worktree <project> <branch>`, `delete worktree <project> <branch>`
-- **Session**: `list session`, `show session <project> <branch> [--shell]`, `create session <project> <branch> [--shell/--attach/--agent]`, `delete session <project> <branch> [--shell/--force]`, `attach session <project> <branch> [--shell]`
-- **Template**: `template [dir] [--project/--branch/--dry-run]` (root-level)
-- TUI dashboard with session/worktree/project views
-- Herd template processing with deterministic FNV-1a port allocation and `env` func
-
-### What's planned
-
-- **Config rebuild** — a future design will decide whether codeherd needs a CLI-driven config at all, and if so, what shape
-- **Session persistence** — `stop` and `delete` are currently synonyms because session state lives as tmux options; a future design may split them via on-disk persistence
-- **Remote execution** — if reintroduced, gets a fresh CLI design; the prior `up`/`down`/`status`/`ssh` stubs were removed in this refactor

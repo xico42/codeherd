@@ -53,9 +53,7 @@ func initBareRepo(t *testing.T, cloneDir string) {
 // create session creates the worktree when it is missing and the project is
 // cloned. Requires tmux to be available.
 func TestCreateSession_autoCreate_createsWorktreeAndStartsSession(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
+	useIsolatedTmux(t)
 
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
@@ -68,7 +66,6 @@ func TestCreateSession_autoCreate_createsWorktreeAndStartsSession(t *testing.T) 
 	if err != nil {
 		t.Fatalf("create session with auto-create = %v, want nil", err)
 	}
-
-	// Clean up the tmux session.
-	exec.Command("tmux", "kill-session", "-t", "myapp-feat").Run()
+	// useIsolatedTmux kills the per-test tmux server in t.Cleanup, so the
+	// session goes with it; no explicit kill-session needed.
 }

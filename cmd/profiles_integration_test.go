@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,9 +133,7 @@ profiles_dir = "` + filepath.Join(filepath.Dir(main), "profiles") + `"
 }
 
 func TestProfiles_sessionIsolationAcrossProfiles(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
+	useIsolatedTmux(t)
 
 	main := setupProfilesTree(t)
 	root := filepath.Dir(main)
@@ -151,8 +148,6 @@ func TestProfiles_sessionIsolationAcrossProfiles(t *testing.T) {
 	if err := runCmd(t, "--config", main, "--profile", "work", "create", "session", "other", "feat"); err != nil {
 		t.Fatalf("work create session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", "personal-myapp-feat").Run()
-	defer exec.Command("tmux", "kill-session", "-t", "work-other-feat").Run()
 
 	out := captureStdout(t, func() {
 		_ = runCmd(t, "--config", main, "--profile", "personal", "list", "session")
@@ -161,7 +156,7 @@ func TestProfiles_sessionIsolationAcrossProfiles(t *testing.T) {
 		t.Errorf("personal list session out = %q, want myapp only", out)
 	}
 
-	tmuxOut, _ := exec.Command("tmux", "ls").Output()
+	tmuxOut, _ := tmuxCmd(t, "ls").Output()
 	if !strings.Contains(string(tmuxOut), "personal-myapp-feat") {
 		t.Errorf("tmux ls did not show personal-myapp-feat:\n%s", tmuxOut)
 	}

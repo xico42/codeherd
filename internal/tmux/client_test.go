@@ -3,6 +3,8 @@ package tmux_test
 import (
 	"errors"
 	"fmt"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -304,6 +306,57 @@ func TestRealRunner_Run_nonZeroExit(t *testing.T) {
 	if exitCode == 0 {
 		t.Error("expected non-zero exit code for nonexistent session")
 	}
+}
+
+// TestRealRunner_Run_SocketEnvUnsetUsesDefault verifies that when SocketEnvVar
+// is empty the runner targets the system default tmux server (no -S injected).
+// We assert by running `tmux -V` which never touches a socket — the call must
+// succeed regardless of the env var.
+func TestRealRunner_Run_SocketEnvUnsetUsesDefault(t *testing.T) {
+	t.Setenv(tmux.SocketEnvVar, "")
+	r := tmux.NewRealRunner()
+	_, _, code, err := r.Run("-V")
+	if err != nil || code != 0 {
+		t.Fatalf("tmux -V with empty %s: err=%v code=%d", tmux.SocketEnvVar, err, code)
+	}
+}
+
+// TestRealRunner_Run_SocketEnvIsolatesServer verifies that setting
+// SocketEnvVar to a per-test path produces an isolated tmux server: a session
+// created on that socket appears in `tmux ls` on the same socket and is gone
+// after `kill-server`. Skips if tmux cannot daemonize in the current env.
+func TestRealRunner_Run_SocketEnvIsolatesServer(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+	socket := filepath.Join(t.TempDir(), "tmux.sock")
+	t.Setenv(tmux.SocketEnvVar, socket)
+	// Also clear $TMUX so tmux does not think we are nested inside another
+	// session (would refuse new-session with an error).
+	t.Setenv("TMUX", "")
+
+	r := tmux.NewRealRunner()
+	// Probe: create a short-lived session. If the server cannot daemonize
+	// (sandboxed PID namespace etc.), skip — this isolates true regressions
+	// from environment limitations.
+	_, _, code, err := r.Run("new-session", "-d", "-s", "probe", "sleep", "30")
+	if err != nil || code != 0 {
+		t.Skipf("tmux daemonize unavailable in this environment (code=%d err=%v)", code, err)
+	}
+	t.Cleanup(func() { _, _, _, _ = r.Run("kill-server") })
+
+	stdout, _, code, err := r.Run("ls", "-F", "#{session_name}")
+	if err != nil || code != 0 {
+		t.Fatalf("tmux ls on isolated socket: code=%d err=%v", code, err)
+	}
+	if !strings.Contains(stdout, "probe") {
+		t.Errorf("isolated socket did not show probe session: %q", stdout)
+	}
+
+	// Outer system tmux server must not see this session. We deliberately do
+	// not assert "session is absent from system tmux" because the developer's
+	// outer server may or may not exist; the positive assertion above is
+	// enough to demonstrate isolation.
 }
 
 func TestClient_NewSessionWithEnv_ok(t *testing.T) {

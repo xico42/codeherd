@@ -98,11 +98,12 @@ type ShowSessionCmd struct {
 
 func (c *ShowSessionCmd) Cobra() *cobra.Command {
 	cobraCmd := &cobra.Command{
-		Use:     "session <project> <branch>",
-		Aliases: []string{"sessions", "ses"},
-		Short:   "Show details for a session",
-		Args:    cobra.ExactArgs(2),
-		RunE:    c.Run,
+		Use:               "session <project> <branch>",
+		Aliases:           []string{"sessions", "ses"},
+		Short:             "Show details for a session",
+		Args:              cobra.ExactArgs(2),
+		RunE:              c.Run,
+		ValidArgsFunction: completeProjectThenBranch,
 	}
 	cobraCmd.Flags().BoolVar(&c.Shell, "shell", false, "target the shell-type session")
 	return cobraCmd
@@ -142,15 +143,17 @@ type CreateSessionCmd struct {
 
 func (c *CreateSessionCmd) Cobra() *cobra.Command {
 	cobraCmd := &cobra.Command{
-		Use:     "session <project> <branch>",
-		Aliases: []string{"sessions", "ses"},
-		Short:   "Start a new session in a worktree",
-		Args:    cobra.ExactArgs(2),
-		RunE:    c.Run,
+		Use:               "session <project> <branch>",
+		Aliases:           []string{"sessions", "ses"},
+		Short:             "Start a new session in a worktree",
+		Args:              cobra.ExactArgs(2),
+		RunE:              c.Run,
+		ValidArgsFunction: completeProjectThenBranch,
 	}
 	cobraCmd.Flags().BoolVar(&c.Shell, "shell", false, "start a shell-type session instead of an agent session")
 	cobraCmd.Flags().BoolVar(&c.Attach, "attach", false, "attach to the session after starting")
 	cobraCmd.Flags().StringVar(&c.Agent, "agent", "", "agent to use for the session")
+	_ = cobraCmd.RegisterFlagCompletionFunc("agent", completeAgents)
 	return cobraCmd
 }
 
@@ -290,11 +293,12 @@ type DeleteSessionCmd struct {
 
 func (c *DeleteSessionCmd) Cobra() *cobra.Command {
 	cobraCmd := &cobra.Command{
-		Use:     "session <project> <branch>",
-		Aliases: []string{"sessions", "ses"},
-		Short:   "Stop a session",
-		Args:    cobra.ExactArgs(2),
-		RunE:    c.Run,
+		Use:               "session <project> <branch>",
+		Aliases:           []string{"sessions", "ses"},
+		Short:             "Stop a session",
+		Args:              cobra.ExactArgs(2),
+		RunE:              c.Run,
+		ValidArgsFunction: completeProjectThenBranch,
 	}
 	cobraCmd.Flags().BoolVar(&c.Shell, "shell", false, "target the shell-type session")
 	cobraCmd.Flags().BoolVar(&c.Force, "force", false, "skip confirmation prompt")
@@ -339,11 +343,12 @@ type AttachSessionCmd struct {
 
 func (c *AttachSessionCmd) Cobra() *cobra.Command {
 	cobraCmd := &cobra.Command{
-		Use:     "session <project> <branch>",
-		Aliases: []string{"sessions", "ses"},
-		Short:   "Attach to an existing session",
-		Args:    cobra.ExactArgs(2),
-		RunE:    c.Run,
+		Use:               "session <project> <branch>",
+		Aliases:           []string{"sessions", "ses"},
+		Short:             "Attach to an existing session",
+		Args:              cobra.ExactArgs(2),
+		RunE:              c.Run,
+		ValidArgsFunction: completeProjectThenBranch,
 	}
 	cobraCmd.Flags().BoolVar(&c.Shell, "shell", false, "target the shell-type session")
 	return cobraCmd

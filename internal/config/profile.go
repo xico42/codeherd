@@ -59,15 +59,9 @@ func LoadProfile(profilesDir, name string) (*Config, error) {
 // stray keys in the main config, and returns a clean *Config scoped to
 // that profile plus a populated *ProfileRegistry.
 func loadProfileMode(main *Config, mainPath, profileName string) (*Config, *ProfileRegistry, error) {
-	profilesDir := main.Defaults.ProfilesDir
-	if profilesDir == "" {
-		profilesDir = filepath.Join(filepath.Dir(mainPath), "profiles")
-	} else {
-		expanded, err := expandTilde(profilesDir)
-		if err != nil {
-			return nil, nil, err
-		}
-		profilesDir = expanded
+	profilesDir, err := resolveProfilesDir(main, mainPath)
+	if err != nil {
+		return nil, nil, err
 	}
 	if st, err := os.Stat(profilesDir); err != nil || !st.IsDir() {
 		return nil, nil, fmt.Errorf("profiles_enabled=true but profiles_dir %q does not exist", profilesDir)
@@ -119,6 +113,53 @@ func warnStrayKeys(main *Config, mainPath string) {
 		return
 	}
 	fmt.Fprintf(warningSink, "warning: %s sets profiles_enabled=true; ignoring %s in main config\n", mainPath, strings.Join(stray, ", "))
+}
+
+// resolveProfilesDir returns the directory holding profile TOML files for
+// the given main config: defaults.profiles_dir (tilde-expanded) when set,
+// otherwise <dir-of-mainPath>/profiles. It does not check existence.
+func resolveProfilesDir(main *Config, mainPath string) (string, error) {
+	if main.Defaults.ProfilesDir == "" {
+		return filepath.Join(filepath.Dir(mainPath), "profiles"), nil
+	}
+	return expandTilde(main.Defaults.ProfilesDir)
+}
+
+// ProfileNamesFor returns the profile names discoverable from the main
+// config at path, independent of whether a profile is active. It returns
+// nil when profiles are disabled, the config or profiles dir is missing,
+// or any error occurs. Intended for shell completion, where Load may
+// error (e.g. profiles_enabled with no active profile) yet the user still
+// wants profile suggestions. An empty path resolves to the default config
+// location.
+func ProfileNamesFor(path string) []string {
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil
+		}
+		path = filepath.Join(home, ".config", "codeherd", "config.toml")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	main := &Config{path: path}
+	if err := toml.Unmarshal(data, main); err != nil {
+		return nil
+	}
+	if !main.Defaults.ProfilesEnabled {
+		return nil
+	}
+	dir, err := resolveProfilesDir(main, path)
+	if err != nil {
+		return nil
+	}
+	names, err := DiscoverProfiles(dir)
+	if err != nil {
+		return nil
+	}
+	return names
 }
 
 // DiscoverProfiles lists profile names (filenames minus ".toml") in

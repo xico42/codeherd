@@ -230,6 +230,46 @@ main_profile = "personal"
 	}
 }
 
+func TestProfileNamesFor_listsProfiles(t *testing.T) {
+	dir := t.TempDir()
+	profDir := filepath.Join(dir, "profiles")
+	if err := os.MkdirAll(profDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"work", "home"} {
+		if err := os.WriteFile(filepath.Join(profDir, n+".toml"), []byte(""), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfgPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte("[defaults]\nprofiles_enabled = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := config.ProfileNamesFor(cfgPath)
+	want := []string{"home", "work"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ProfileNamesFor = %v, want %v", got, want)
+	}
+}
+
+func TestProfileNamesFor_profilesDisabled_returnsNil(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte("[defaults]\nprofiles_enabled = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := config.ProfileNamesFor(cfgPath); got != nil {
+		t.Fatalf("ProfileNamesFor = %v, want nil", got)
+	}
+}
+
+func TestProfileNamesFor_missingConfig_returnsNil(t *testing.T) {
+	if got := config.ProfileNamesFor(filepath.Join(t.TempDir(), "absent.toml")); got != nil {
+		t.Fatalf("ProfileNamesFor = %v, want nil", got)
+	}
+}
+
 func TestLoad_profilesEnabled_warnsOnStrayKeys(t *testing.T) {
 	dir := t.TempDir()
 	writeProfile(t, filepath.Join(dir, "profiles"), "personal", "")

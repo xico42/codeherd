@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/semconv"
 )
 
 var (
@@ -34,7 +35,7 @@ It is like a shepherd, but for coding agents :).
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		var err error
-		cfg, registry, err = config.Load(cfgFile, profileFlag)
+		cfg, registry, err = config.Load(cfgFile, resolveProfileArg(profileFlag))
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
 		}
@@ -47,10 +48,21 @@ func init() {
 	rootCmd.SilenceUsage = true
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/.config/codeherd/config.toml)")
-	rootCmd.PersistentFlags().StringVarP(&profileFlag, "profile", "p", "", "profile to load (when profiles_enabled=true)")
+	rootCmd.PersistentFlags().StringVarP(&profileFlag, "profile", "p", "", "profile to load; overrides $CODEHERD_PROFILE and defaults.main_profile (requires profiles_enabled=true)")
 	rootCmd.Flags().BoolVar(&noTmux, "no-tmux", false, "run TUI directly without tmux wrapping")
 
 	registerCommands(rootCmd)
+}
+
+// resolveProfileArg returns the profile name to hand to config.Load:
+// the --profile flag when set, otherwise the CODEHERD_PROFILE env var.
+// config.Load then falls back to defaults.main_profile, yielding the
+// precedence main_profile < CODEHERD_PROFILE < --profile.
+func resolveProfileArg(flag string) string {
+	if flag != "" {
+		return flag
+	}
+	return os.Getenv(semconv.EnvProfile)
 }
 
 // Execute runs the root command and returns any error.

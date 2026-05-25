@@ -115,6 +115,7 @@ func TestProfiles_defaultProfileMatchesMainProfile(t *testing.T) {
 
 func TestProfiles_noMainProfile_errors(t *testing.T) {
 	main := setupProfilesTree(t)
+	t.Setenv(config.EnvProfileForTest(), "") // clear any ambient CODEHERD_PROFILE
 	content := `[defaults]
 profiles_enabled = true
 profiles_dir = "` + filepath.Join(filepath.Dir(main), "profiles") + `"
@@ -187,5 +188,67 @@ func TestProfiles_strayKeysWarning(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "profiles_enabled=true") {
 		t.Errorf("warning sink = %q, want stray-keys warning", buf.String())
+	}
+}
+
+func TestProfiles_envSelectsProfile(t *testing.T) {
+	main := setupProfilesTree(t)
+	t.Setenv(config.EnvProfileForTest(), "work")
+
+	// No --profile flag: CODEHERD_PROFILE should override main_profile=personal.
+	out := captureStdout(t, func() {
+		_ = runCmd(t, "--config", main, "list", "project")
+	})
+	if !strings.Contains(out, "other") || strings.Contains(out, "myapp") {
+		t.Errorf("env-selected list project out = %q, want other only", out)
+	}
+}
+
+func TestProfiles_flagBeatsEnv(t *testing.T) {
+	main := setupProfilesTree(t)
+	t.Setenv(config.EnvProfileForTest(), "work")
+
+	// --profile personal must win over CODEHERD_PROFILE=work.
+	out := captureStdout(t, func() {
+		_ = runCmd(t, "--config", main, "--profile", "personal", "list", "project")
+	})
+	if !strings.Contains(out, "myapp") || strings.Contains(out, "other") {
+		t.Errorf("flag-beats-env list project out = %q, want myapp only", out)
+	}
+}
+
+func TestProfiles_envMissingProfile_errors(t *testing.T) {
+	main := setupProfilesTree(t)
+	t.Setenv(config.EnvProfileForTest(), "ghost")
+
+	err := runCmd(t, "--config", main, "list", "project")
+	if err == nil {
+		t.Fatal("runCmd() error = nil, want error for missing env profile")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %v, want 'profile not found'", err)
+	}
+}
+
+func TestProfiles_envIgnoredWhenDisabled(t *testing.T) {
+	// A plain config with profiles_enabled unset: CODEHERD_PROFILE must be ignored.
+	root := t.TempDir()
+	cfgPath := filepath.Join(root, "config.toml")
+	body := `[defaults]
+projects_dir = "` + filepath.Join(root, "projects") + `"
+
+[projects.plain]
+repo = "git@github.com:u/plain.git"
+`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.EnvProfileForTest(), "work")
+
+	out := captureStdout(t, func() {
+		_ = runCmd(t, "--config", cfgPath, "list", "project")
+	})
+	if !strings.Contains(out, "plain") {
+		t.Errorf("profiles-disabled list project out = %q, want plain (env ignored)", out)
 	}
 }

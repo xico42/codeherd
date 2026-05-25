@@ -46,11 +46,12 @@ type ShowProjectCmd struct{}
 
 func (c *ShowProjectCmd) Cobra() *cobra.Command {
 	return &cobra.Command{
-		Use:     "project <name>",
-		Aliases: []string{"projects", "pr"},
-		Short:   "Show config for a project",
-		Args:    cobra.ExactArgs(1),
-		RunE:    c.Run,
+		Use:               "project <name>",
+		Aliases:           []string{"projects", "pr"},
+		Short:             "Show config for a project",
+		Args:              cobra.ExactArgs(1),
+		RunE:              c.Run,
+		ValidArgsFunction: completeProjectOnly,
 	}
 }
 
@@ -84,10 +85,11 @@ type CloneProjectCmd struct {
 
 func (c *CloneProjectCmd) Cobra() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "project [<name>]",
-		Aliases: []string{"projects", "pr"},
-		Short:   "Clone a project's repo into projects_dir",
-		RunE:    c.Run,
+		Use:               "project [<name>]",
+		Aliases:           []string{"projects", "pr"},
+		Short:             "Clone a project's repo into projects_dir",
+		RunE:              c.Run,
+		ValidArgsFunction: completeProjectOnly,
 	}
 	cmd.Flags().BoolVar(&c.All, "all", false, "clone all configured projects")
 	return cmd

@@ -20,6 +20,12 @@ func (c *RunAgentCmd) Cobra() *cobra.Command {
 		Long:  "Resolves a registered agent from config and replaces the current process with it. The agent inherits the current environment with its configured env vars overlaid.",
 		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if len(args) != 0 {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			return completeAgents(cmd, args, toComplete)
+		},
 	}
 }
 

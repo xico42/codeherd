@@ -49,6 +49,7 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/.config/codeherd/config.toml)")
 	rootCmd.PersistentFlags().StringVarP(&profileFlag, "profile", "p", "", "profile to load; overrides $CODEHERD_PROFILE and defaults.main_profile (requires profiles_enabled=true)")
+	_ = rootCmd.RegisterFlagCompletionFunc("profile", completeProfiles)
 	rootCmd.Flags().BoolVar(&noTmux, "no-tmux", false, "run TUI directly without tmux wrapping")
 
 	registerCommands(rootCmd)

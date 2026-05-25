@@ -24,11 +24,12 @@ type ListWorktreeCmd struct{}
 
 func (c *ListWorktreeCmd) Cobra() *cobra.Command {
 	return &cobra.Command{
-		Use:     "worktree [project]",
-		Aliases: []string{"worktrees", "wt"},
-		Short:   "List worktrees (all projects, or a single project)",
-		Args:    cobra.MaximumNArgs(1),
-		RunE:    c.Run,
+		Use:               "worktree [project]",
+		Aliases:           []string{"worktrees", "wt"},
+		Short:             "List worktrees (all projects, or a single project)",
+		Args:              cobra.MaximumNArgs(1),
+		RunE:              c.Run,
+		ValidArgsFunction: completeProjectOnly,
 	}
 }
 
@@ -71,15 +72,18 @@ type CreateWorktreeCmd struct {
 
 func (c *CreateWorktreeCmd) Cobra() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "worktree <project> <branch>",
-		Aliases: []string{"worktrees", "wt"},
-		Short:   "Create a new worktree for a project",
-		Args:    cobra.ExactArgs(2),
-		RunE:    c.Run,
+		Use:               "worktree <project> <branch>",
+		Aliases:           []string{"worktrees", "wt"},
+		Short:             "Create a new worktree for a project",
+		Args:              cobra.ExactArgs(2),
+		RunE:              c.Run,
+		ValidArgsFunction: completeProjectOnly,
 	}
 	cmd.Flags().StringVar(&c.From, "from", "", "base branch to create worktree from")
 	cmd.Flags().BoolVar(&c.Attach, "attach", false, "start a coding session after creation")
 	cmd.Flags().StringVar(&c.Agent, "agent", "", "agent to use for the session (with --attach)")
+	_ = cmd.RegisterFlagCompletionFunc("from", completeBranches)
+	_ = cmd.RegisterFlagCompletionFunc("agent", completeAgents)
 	return cmd
 }
 
@@ -187,11 +191,12 @@ type DeleteWorktreeCmd struct {
 
 func (c *DeleteWorktreeCmd) Cobra() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "worktree <project> <branch>",
-		Aliases: []string{"worktrees", "wt"},
-		Short:   "Delete a worktree",
-		Args:    cobra.ExactArgs(2),
-		RunE:    c.Run,
+		Use:               "worktree <project> <branch>",
+		Aliases:           []string{"worktrees", "wt"},
+		Short:             "Delete a worktree",
+		Args:              cobra.ExactArgs(2),
+		RunE:              c.Run,
+		ValidArgsFunction: completeProjectThenBranch,
 	}
 	cmd.Flags().BoolVar(&c.Force, "force", false, "skip confirmation and kill any active session")
 	return cmd

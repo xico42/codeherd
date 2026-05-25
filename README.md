@@ -279,6 +279,26 @@ Requires Go 1.22+, git, and tmux.
 make install    # builds and installs to ~/.local/bin/ch
 ```
 
+## Shell Completion
+
+`ch` ships dynamic completion for agents, projects, profiles, and worktree
+branches. Cobra generates per-shell scripts via `ch completion <shell>`.
+
+```bash
+# zsh — ensure the dir is on your $fpath, then reload
+ch completion zsh > "${fpath[1]}/_ch"
+
+# bash
+ch completion bash | sudo tee /etc/bash_completion.d/ch > /dev/null
+
+# fish
+ch completion fish > ~/.config/fish/completions/ch.fish
+```
+
+Completion respects the active profile: inside a profile-mode session
+(`$CODEHERD_PROFILE` set) or with `-p <profile>`, branch suggestions come
+from that profile's worktrees.
+
 ## Quick Start
 
 ```bash

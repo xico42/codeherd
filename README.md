@@ -91,6 +91,33 @@ Each project points to a git repository and a default branch. Clone paths mirror
 
 Agents are CLI tools configured once and selected at session start. Any command-line tool works -- Claude Code, Aider, Codex, or a custom script. Each agent defines a command, optional arguments, and optional environment variables.
 
+### Profiles
+
+Profiles let one machine carry several independent codeherd configs — e.g. a
+`personal` and a `work` set of projects and agents. Enable them in the main
+config and keep each profile as its own TOML file under `profiles_dir`:
+
+```toml
+[defaults]
+profiles_enabled = true
+profiles_dir = "~/.config/codeherd/profiles"   # default: <config dir>/profiles
+main_profile = "personal"                       # used when nothing else selects one
+```
+
+Each `<profiles_dir>/<name>.toml` is a full config (its own `projects`, `agents`,
+`projects_dir`). When `profiles_enabled = true`, `projects`/`agents`/`projects_dir`
+in the main config are ignored (with a warning).
+
+The active profile is resolved by precedence, lowest to highest:
+
+1. `defaults.main_profile` in the main config
+2. the `CODEHERD_PROFILE` environment variable
+3. the `--profile` / `-p` flag
+
+codeherd stamps `CODEHERD_PROFILE` into every profile-mode session, so a nested
+`ch` call inside a session (for example `ch run <agent>`) defaults to that
+session's profile without needing `--profile`.
+
 ### Sessions
 
 Sessions are tmux sessions anchored to a project and branch. They run independently and persist across disconnects:
@@ -114,7 +141,7 @@ codeherd stamps a fixed set of `CODEHERD_*` environment variables on every sessi
 | `CODEHERD_BRANCH` | Branch name | Always set |
 | `CODEHERD_CLONE_DIR` | Absolute path to the main git clone | Set whenever the project has a valid `repo` URL. Needed by anything that runs `git` inside a worktree — git worktrees keep `.git` as a file that points back to the main clone |
 | `CODEHERD_WORKTREE_PATH` | Absolute path to the worktree root | Always set |
-| `CODEHERD_PROFILE` | Active profile name | Only set when a profile is active |
+| `CODEHERD_PROFILE` | Active profile name | Only set when a profile is active. Nested `ch` calls inherit it as the default profile (see [Profiles](#profiles)) |
 
 These values win over any conflicting keys in `[agents.<name>].env` — the agent-level env is applied first, then codeherd's values are stamped on top.
 

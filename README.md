@@ -1,5 +1,7 @@
 # codeherd
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 A CLI for managing parallel agentic coding sessions. It organizes projects and git worktrees, configures per-agent environments with deterministic port allocation, and orchestrates tmux sessions where AI coding agents run independently.
 
 It is like a shepherd, but for coding agents.
@@ -273,6 +275,20 @@ See [docs/hooks.md](docs/hooks.md) for the full reference including environment 
 
 ## Install
 
+### Via mise
+
+```bash
+mise use github:xico42/codeherd@latest
+```
+
+Once codeherd lands in the [mise official registry](https://github.com/jdx/mise/tree/main/registry), this becomes `mise use codeherd@latest`.
+
+### Manual
+
+Download the appropriate archive from the [latest release](https://github.com/xico42/codeherd/releases/latest), extract, and place `ch` on your `PATH`. Each release ships archives for `linux` and `darwin` on `amd64` and `arm64`, with sigstore signatures and a `checksums.txt`.
+
+### From source
+
 Requires Go 1.22+, git, and tmux.
 
 ```bash
@@ -334,6 +350,7 @@ ch
 | `ch attach session <project> <branch>` | Attach to a session |
 | `ch show session <project> <branch>` | Show session details |
 | `ch delete session <project> <branch>` | Stop a session |
+| `ch version` | Print the installed version |
 
 ## Development
 

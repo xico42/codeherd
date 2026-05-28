@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [VERSION]
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read VERSION
+        id: read
+        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if tag exists
+        id: check
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v${{ steps.read.outputs.version }}"; then
+            echo "Tag v${{ steps.read.outputs.version }} already exists, skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify release notes exist
+        if: steps.check.outputs.skip != 'true'
+        run: test -f docs/release-notes/${{ steps.read.outputs.version }}.md
+
+      - uses: actions/setup-go@v5
+        if: steps.check.outputs.skip != 'true'
+        with:
+          go-version-file: go.mod
+
+      - name: Build + archive all targets
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          for goos in linux darwin; do
+            for goarch in amd64 arm64; do
+              make release-build   GOOS=$goos GOARCH=$goarch
+              make release-archive GOOS=$goos GOARCH=$goarch
+            done
+          done
+
+      - name: Checksums
+        if: steps.check.outputs.skip != 'true'
+        run: make release-checksums
+
+      - uses: sigstore/cosign-installer@v3
+        if: steps.check.outputs.skip != 'true'
+
+      - name: Sign archives + checksums
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          cd dist
+          for f in *.tar.gz checksums.txt; do
+            cosign sign-blob --yes \
+              --output-signature "$f.sig" \
+              --output-certificate "$f.pem" "$f"
+          done
+
+      - name: Tag + create release
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V=${{ steps.read.outputs.version }}
+          git tag "v$V"
+          git push origin "v$V"
+          gh release create "v$V" \
+            --title "v$V" \
+            --notes-file "docs/release-notes/$V.md" \
+            dist/*.tar.gz dist/*.sig dist/*.pem dist/checksums.txt

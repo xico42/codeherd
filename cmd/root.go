@@ -67,8 +67,10 @@ func resolveProfileArg(flag string) string {
 }
 
 // Execute runs the root command and returns any error.
-func Execute() error {
+// version is the build-time version string surfaced via `ch --version` / `ch version`.
+func Execute(version string) error {
 	resetAllFlags(rootCmd)
+	rootCmd.Version = version
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return fmt.Errorf("%w", err)

@@ -31,4 +31,6 @@ func registerCommands(root *cobra.Command) {
 	root.AddCommand(runCmd.Cobra())
 
 	root.AddCommand((&TemplateCmd{}).Cobra())
+
+	root.AddCommand(newVersionCmd())
 }

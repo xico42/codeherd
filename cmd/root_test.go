@@ -14,7 +14,7 @@ func runCmd(t *testing.T, args ...string) error {
 	orig := os.Args
 	os.Args = append([]string{"ch"}, args...)
 	defer func() { os.Args = orig }()
-	return cmd.Execute()
+	return cmd.Execute("test")
 }
 
 // TestExecute_Help exercises Execute() and all init() registrations by
@@ -66,5 +66,12 @@ func TestExecute_UnknownCommand(t *testing.T) {
 	err := runCmd(t, "totally-unknown-subcommand")
 	if err == nil {
 		t.Error("Execute() with unknown command = nil, want error")
+	}
+}
+
+// TestExecute_Version exercises the version subcommand.
+func TestExecute_Version(t *testing.T) {
+	if err := runCmd(t, "version"); err != nil {
+		t.Errorf("Execute(version) = %v, want nil", err)
 	}
 }

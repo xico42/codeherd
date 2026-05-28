@@ -1,9 +1,12 @@
-BIN_NAME  := ch
-INSTALL   := $(HOME)/.local/bin/$(BIN_NAME)
-LDFLAGS   := -ldflags "-s -w -X main.version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)"
+BIN_NAME        := ch
+INSTALL         := $(HOME)/.local/bin/$(BIN_NAME)
+LDFLAGS         := -ldflags "-s -w -X main.version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)"
+DIST_DIR        := dist
+VERSION         := $(shell cat VERSION)
+RELEASE_LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 COVERAGE_THRESHOLD := 80
 
-.PHONY: build install test test-integration coverage lint clean deps setup check vendor tools
+.PHONY: build install test test-integration coverage lint clean deps setup check vendor tools release-build release-archive release-checksums
 
 deps:
 	go mod download
@@ -40,10 +43,25 @@ tools:
 	go install tool
 
 clean:
-	rm -f $(BIN_NAME) coverage.out
+	rm -rf $(BIN_NAME) coverage.out $(DIST_DIR)
 
 format:
 	gofmt -s -w .
+
+release-build:
+	mkdir -p $(DIST_DIR)/$(GOOS)-$(GOARCH)
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+	  go build -trimpath $(RELEASE_LDFLAGS) \
+	  -o $(DIST_DIR)/$(GOOS)-$(GOARCH)/$(BIN_NAME) .
+
+release-archive:
+	cp LICENSE README.md $(DIST_DIR)/$(GOOS)-$(GOARCH)/
+	tar -C $(DIST_DIR)/$(GOOS)-$(GOARCH) -czf \
+	  $(DIST_DIR)/$(BIN_NAME)-$(VERSION)-$(GOOS)-$(GOARCH).tar.gz \
+	  $(BIN_NAME) LICENSE README.md
+
+release-checksums:
+	cd $(DIST_DIR) && sha256sum *.tar.gz > checksums.txt
 
 check: coverage test-integration lint build
 	@echo "All checks passed"

@@ -42,3 +42,23 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make lint
+
+  release-build:
+    name: Release build smoke (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make release-build GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
+      - run: make release-archive GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
+      - name: Verify archive contents
+        run: |
+          tar -tzf dist/ch-$(cat VERSION)-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz \
+            | LC_ALL=C sort | diff - <(printf "LICENSE\nREADME.md\nch\n")

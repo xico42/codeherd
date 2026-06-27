@@ -25,6 +25,7 @@ type formModel struct {
 	// Context (read-only)
 	project    string
 	baseBranch string
+	tracksRef  string
 
 	// Dependencies for creating per-project services
 	cfg        *config.Config
@@ -34,6 +35,8 @@ type formModel struct {
 type formContext struct {
 	project    string
 	baseBranch string
+	tracksRef  string
+	branch     string // optional pre-fill for the branch input
 }
 
 func newFormModel(ctx formContext, cfg *config.Config, tmuxClient *tmux.Client) *formModel {
@@ -45,12 +48,17 @@ func newFormModel(ctx formContext, cfg *config.Config, tmuxClient *tmux.Client) 
 		tmuxClient: tmuxClient,
 	}
 
+	m.tracksRef = ctx.tracksRef
+	if ctx.branch != "" {
+		m.branch = ctx.branch
+	}
+
 	agents := cfg.AgentNames()
 
 	group1 := huh.NewGroup(
 		huh.NewNote().
 			Title("New Worktree").
-			Description(fmt.Sprintf("Project: %s\nBase: %s", ctx.project, ctx.baseBranch)),
+			Description(worktreeFormDescription(ctx)),
 		huh.NewInput().
 			Title("Branch name").
 			Placeholder("feature-name").
@@ -118,6 +126,7 @@ func (f *formModel) submit() tea.Cmd {
 	branch := strings.TrimSpace(f.branch)
 	project := f.project
 	baseBranch := f.baseBranch
+	tracksRef := f.tracksRef
 	attach := f.attach
 	agent := f.agent
 	cfg := f.cfg
@@ -132,9 +141,12 @@ func (f *formModel) submit() tea.Cmd {
 		wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, h)
 		var result worktree.NewResult
 		var err error
-		if baseBranch != "" {
+		switch {
+		case tracksRef != "":
+			result, err = wtSvc.NewTracking(project, branch, tracksRef)
+		case baseBranch != "":
 			result, err = wtSvc.NewFrom(project, branch, baseBranch)
-		} else {
+		default:
 			result, err = wtSvc.New(project, branch)
 		}
 		if err != nil {
@@ -143,12 +155,19 @@ func (f *formModel) submit() tea.Cmd {
 
 		return worktreeCreatedMsg{
 			project: project,
-			branch:  branch,
+			branch:  result.Branch,
 			path:    result.Path,
 			attach:  attach,
 			agent:   agent,
 		}
 	}
+}
+
+func worktreeFormDescription(ctx formContext) string {
+	if ctx.tracksRef != "" {
+		return fmt.Sprintf("Project: %s\nTracks: %s", ctx.project, ctx.tracksRef)
+	}
+	return fmt.Sprintf("Project: %s\nBase: %s", ctx.project, ctx.baseBranch)
 }
 
 // showForm transitions the model to the form screen.

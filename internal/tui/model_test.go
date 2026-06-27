@@ -297,6 +297,7 @@ func TestModel_selectedItem_exists(t *testing.T) {
 	got := m.selectedItem()
 	if got == nil {
 		t.Fatal("selectedItem() = nil, want item")
+		return
 	}
 	if got.Project != "myapp" {
 		t.Errorf("project = %q, want %q", got.Project, "myapp")
@@ -358,16 +359,23 @@ func TestModel_updateList_helpToggle(t *testing.T) {
 	}
 }
 
-func TestModel_updateList_refresh(t *testing.T) {
-	m := Model{screen: screenList}
-	m.list = newList(nil)
+func TestModel_updateList_remoteOpensPicker(t *testing.T) {
+	m := Model{screen: screenList, cfg: &config.Config{}}
+	m.list = newList([]list.Item{Item{Project: "myapp", Branch: "main", Group: groupWorktree}})
 	m.keys = defaultKeyMap()
 
-	// Press 'r' to refresh.
+	// Press 'r' to open the remote-branch picker for the selected project.
 	msg := tea.KeyPressMsg(tea.Key{Code: 'r', Text: "r"})
-	_, cmd := m.Update(msg)
+	updated, cmd := m.Update(msg)
+	um := updated.(Model)
+	if um.screen != screenRemotePicker {
+		t.Errorf("screen = %d, want screenRemotePicker", um.screen)
+	}
+	if um.remotePicker == nil {
+		t.Error("expected remotePicker to be set")
+	}
 	if cmd == nil {
-		t.Error("refresh key should return a non-nil Cmd")
+		t.Error("remote key should return a non-nil fetch Cmd")
 	}
 }
 

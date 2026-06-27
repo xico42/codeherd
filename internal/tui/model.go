@@ -26,6 +26,7 @@ const (
 	screenForm
 	screenConfirmDelete
 	screenAgentPicker
+	screenRemotePicker
 )
 
 const maxWidth = 80
@@ -43,6 +44,11 @@ type worktreeCreatedMsg struct {
 	path    string
 	attach  bool
 	agent   string
+}
+type remoteBranchesMsg struct {
+	project  string
+	branches []worktree.RemoteBranch
+	err      error
 }
 
 // Model is the top-level Bubble Tea model.
@@ -78,6 +84,9 @@ type Model struct {
 
 	// Agent picker sub-model.
 	agentPicker *agentPickerModel
+
+	// Remote-branch picker sub-model.
+	remotePicker *remotePickerModel
 
 	// Profile state. registry is nil when profile mode is off.
 	// profileCache memoizes per-profile services built on demand by
@@ -231,6 +240,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startSessionAfterCreate(msg)
 		}
 		return m, m.refreshCmd()
+
+	case remoteBranchesMsg:
+		if m.remotePicker != nil && m.remotePicker.project == msg.project {
+			if msg.err != nil {
+				m.remotePicker.errText = msg.err.Error()
+				m.remotePicker.loading = false
+			} else {
+				m.remotePicker.setBranches(msg.branches)
+			}
+		}
+		return m, nil
 	}
 
 	// Route to sub-screens.
@@ -241,6 +261,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateForm(msg)
 	case screenAgentPicker:
 		return m.updateAgentPicker(msg)
+	case screenRemotePicker:
+		return m.updateRemotePicker(msg)
 	default:
 		return m.updateList(msg)
 	}
@@ -273,8 +295,8 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Delete):
 			return m.startDelete()
 
-		case key.Matches(msg, m.keys.Refresh):
-			return m, m.refreshCmd()
+		case key.Matches(msg, m.keys.Remote):
+			return m.startRemotePicker()
 
 		case key.Matches(msg, m.keys.NextProfile):
 			return m.switchProfile(+1)
@@ -305,6 +327,10 @@ func (m Model) View() tea.View {
 	case screenAgentPicker:
 		if m.agentPicker != nil {
 			content = m.agentPicker.View()
+		}
+	case screenRemotePicker:
+		if m.remotePicker != nil {
+			content = m.remotePicker.View()
 		}
 	default:
 		content = m.viewList()
@@ -540,4 +566,61 @@ func indexOf(names []string, target string) int {
 		}
 	}
 	return -1
+}
+
+// startRemotePicker opens the remote-branch picker for the selected item's
+// project and kicks off an async fetch + list.
+func (m Model) startRemotePicker() (tea.Model, tea.Cmd) {
+	sel := m.selectedItem()
+	if sel == nil || sel.Project == "" {
+		return m, nil
+	}
+	m.remotePicker = newRemotePicker(sel.Project, m.cfg, m.tmuxClient)
+	m.screen = screenRemotePicker
+	return m, m.fetchRemoteBranchesCmd(sel.Project)
+}
+
+// fetchRemoteBranchesCmd fetches all remotes (best-effort) and lists the
+// remote-tracking branches for the project.
+func (m Model) fetchRemoteBranchesCmd(project string) tea.Cmd {
+	cfg := m.cfg
+	tmuxClient := m.tmuxClient
+	return func() tea.Msg {
+		wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, &hooks.NoOp{})
+		branches, err := wtSvc.RemoteBranches(project)
+		return remoteBranchesMsg{project: project, branches: branches, err: err}
+	}
+}
+
+// updateRemotePicker handles input while the remote-branch picker is shown.
+func (m Model) updateRemotePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		if m.remotePicker.list.FilterState() != list.Filtering {
+			switch keyMsg.String() {
+			case "esc":
+				m.screen = screenList
+				m.remotePicker = nil
+				return m, nil
+			case "enter":
+				if rb, ok := m.remotePicker.selected(); ok {
+					project := m.remotePicker.project
+					m.remotePicker = nil
+					return m.showTrackForm(project, rb)
+				}
+				return m, nil
+			}
+		}
+	}
+	var cmd tea.Cmd
+	m.remotePicker, cmd = m.remotePicker.Update(msg)
+	return m, cmd
+}
+
+// showTrackForm opens the create-worktree form pre-filled to track the selected
+// remote branch, deriving the local branch name from it.
+func (m Model) showTrackForm(project string, rb worktree.RemoteBranch) (tea.Model, tea.Cmd) {
+	ctx := formContext{project: project, tracksRef: rb.Ref, branch: rb.Branch}
+	m.form = newFormModel(ctx, m.cfg, m.tmuxClient)
+	m.screen = screenForm
+	return m, m.form.Init()
 }

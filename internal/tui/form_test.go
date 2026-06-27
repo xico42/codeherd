@@ -8,7 +8,33 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/worktree"
 )
+
+func TestNewFormModel_trackPrefill(t *testing.T) {
+	cfg := &config.Config{Projects: map[string]config.ProjectConfig{"myapp": {}}}
+	ctx := formContext{project: "myapp", tracksRef: "origin/feat-x", branch: "feat-x"}
+	m := newFormModel(ctx, cfg, nil)
+	if m.tracksRef != "origin/feat-x" {
+		t.Errorf("tracksRef = %q, want origin/feat-x", m.tracksRef)
+	}
+	if m.branch != "feat-x" {
+		t.Errorf("prefilled branch = %q, want feat-x", m.branch)
+	}
+}
+
+func TestShowTrackForm_opensFormScreen(t *testing.T) {
+	cfg := &config.Config{Projects: map[string]config.ProjectConfig{"myapp": {}}}
+	m := Model{cfg: cfg}
+	updated, _ := m.showTrackForm("myapp", worktree.RemoteBranch{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"})
+	mm := updated.(Model)
+	if mm.screen != screenForm {
+		t.Errorf("screen = %d, want screenForm", mm.screen)
+	}
+	if mm.form == nil || mm.form.tracksRef != "origin/feat-x" {
+		t.Errorf("form not set up to track; form=%+v", mm.form)
+	}
+}
 
 var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 

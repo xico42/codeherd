@@ -104,6 +104,31 @@ func branchNames(entries []worktree.ListEntry) []string {
 	return names
 }
 
+// completionRemoteBrancher lists a project's remote-tracking branches during
+// completion (no fetch). Declared as a var so tests can stub it.
+var completionRemoteBrancher = func(cfg *config.Config, project string) ([]worktree.RemoteBranch, error) {
+	svc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), &hooks.NoOp{})
+	return svc.ListRemoteBranches(project)
+}
+
+// completeRemoteBranches completes the --track flag against the remote-tracking
+// branches of the project named in args[0].
+func completeRemoteBranches(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) == 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	branches, err := completionRemoteBrancher(loadCompletionConfig(cmd), args[0])
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	refs := make([]string, 0, len(branches))
+	for _, b := range branches {
+		refs = append(refs, b.Ref)
+	}
+	sort.Strings(refs)
+	return refs, cobra.ShellCompDirectiveNoFileComp
+}
+
 // completeProjectThenBranch completes the <project> positional (arg 0),
 // then the <branch> positional (arg 1) against that project's worktrees.
 // Used by commands operating on an existing branch.

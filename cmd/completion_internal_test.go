@@ -19,6 +19,35 @@ func withStubConfig(t *testing.T, c *config.Config) {
 	t.Cleanup(func() { loadCompletionConfig = orig })
 }
 
+func TestCompleteRemoteBranches(t *testing.T) {
+	orig := completionRemoteBrancher
+	t.Cleanup(func() { completionRemoteBrancher = orig })
+	completionRemoteBrancher = func(_ *config.Config, project string) ([]worktree.RemoteBranch, error) {
+		return []worktree.RemoteBranch{
+			{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"},
+			{Remote: "upstream", Branch: "fix-y", Ref: "upstream/fix-y"},
+		}, nil
+	}
+
+	cmd := (&CreateWorktreeCmd{}).Cobra()
+	got, directive := completeRemoteBranches(cmd, []string{"myapp"}, "")
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Errorf("directive = %v", directive)
+	}
+	want := []string{"origin/feat-x", "upstream/fix-y"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("completions = %v, want %v", got, want)
+	}
+}
+
+func TestCompleteRemoteBranches_noProject(t *testing.T) {
+	cmd := (&CreateWorktreeCmd{}).Cobra()
+	got, _ := completeRemoteBranches(cmd, nil, "")
+	if got != nil {
+		t.Errorf("expected nil completions with no project, got %v", got)
+	}
+}
+
 func TestCompleteAgents(t *testing.T) {
 	withStubConfig(t, &config.Config{Agents: map[string]config.AgentConfig{
 		"claude": {Cmd: "claude"},

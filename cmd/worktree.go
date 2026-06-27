@@ -66,30 +66,40 @@ func (c *ListWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 
 type CreateWorktreeCmd struct {
 	From   string
+	Track  string
 	Attach bool
 	Agent  string
 }
 
 func (c *CreateWorktreeCmd) Cobra() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "worktree <project> <branch>",
+		Use:               "worktree <project> [branch]",
 		Aliases:           []string{"worktrees", "wt"},
 		Short:             "Create a new worktree for a project",
-		Args:              cobra.ExactArgs(2),
+		Args:              cobra.RangeArgs(1, 2),
 		RunE:              c.Run,
 		ValidArgsFunction: completeProjectOnly,
 	}
 	cmd.Flags().StringVar(&c.From, "from", "", "base branch to create worktree from")
+	cmd.Flags().StringVar(&c.Track, "track", "", "remote branch to fetch and check out (e.g. feat-x or upstream/feat-x)")
 	cmd.Flags().BoolVar(&c.Attach, "attach", false, "start a coding session after creation")
 	cmd.Flags().StringVar(&c.Agent, "agent", "", "agent to use for the session (with --attach)")
+	cmd.MarkFlagsMutuallyExclusive("from", "track")
 	_ = cmd.RegisterFlagCompletionFunc("from", completeBranches)
+	_ = cmd.RegisterFlagCompletionFunc("track", completeRemoteBranches)
 	_ = cmd.RegisterFlagCompletionFunc("agent", completeAgents)
 	return cmd
 }
 
 func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
-	project, branch := args[0], args[1]
-	fmt.Fprintf(cmd.OutOrStdout(), "Creating worktree %s/%s...  ", project, branch)
+	project := args[0]
+	posBranch := ""
+	if len(args) > 1 {
+		posBranch = args[1]
+	}
+	if c.Track == "" && posBranch == "" {
+		return fmt.Errorf("a <branch> argument is required unless --track is given")
+	}
 
 	projCfg := cfg.Projects[project]
 	h := hooks.New(projCfg.Hooks)
@@ -102,15 +112,23 @@ func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 	svc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), h)
 	var result worktree.NewResult
 	var err error
-	if c.From != "" {
-		result, err = svc.NewFrom(project, branch, c.From)
-	} else {
-		result, err = svc.New(project, branch)
+	switch {
+	case c.Track != "":
+		fmt.Fprintf(cmd.OutOrStdout(), "Checking out %s into a new worktree...  ", c.Track)
+		result, err = svc.NewTracking(project, posBranch, c.Track)
+	case c.From != "":
+		fmt.Fprintf(cmd.OutOrStdout(), "Creating worktree %s/%s...  ", project, posBranch)
+		result, err = svc.NewFrom(project, posBranch, c.From)
+	default:
+		fmt.Fprintf(cmd.OutOrStdout(), "Creating worktree %s/%s...  ", project, posBranch)
+		result, err = svc.New(project, posBranch)
 	}
 	if err != nil {
 		fmt.Fprintln(cmd.OutOrStdout())
-		return worktreeErr(cmd, project, branch, err)
+		return worktreeErr(cmd, project, posBranch, err)
 	}
+
+	branch := result.Branch
 
 	// File copy
 	if len(projCfg.Files) > 0 {

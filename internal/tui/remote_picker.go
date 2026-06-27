@@ -1,0 +1,80 @@
+package tui
+
+import (
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/tmux"
+	"github.com/xico42/codeherd/internal/worktree"
+)
+
+// remoteBranchItem adapts a RemoteBranch to the bubbles list.Item interface.
+type remoteBranchItem struct {
+	rb worktree.RemoteBranch
+}
+
+func (i remoteBranchItem) FilterValue() string { return i.rb.Ref }
+func (i remoteBranchItem) Title() string       { return i.rb.Ref }
+func (i remoteBranchItem) Description() string { return "" }
+
+// remotePickerModel shows a filterable list of remote-tracking branches.
+type remotePickerModel struct {
+	list       list.Model
+	project    string
+	loading    bool
+	errText    string
+	cfg        *config.Config
+	tmuxClient *tmux.Client
+}
+
+func newRemotePicker(project string, cfg *config.Config, tmuxClient *tmux.Client) *remotePickerModel {
+	l := list.New(nil, list.NewDefaultDelegate(), maxWidth, 20)
+	l.Title = "Remote branches"
+	l.SetShowHelp(false)
+	l.SetFilteringEnabled(true)
+	l.DisableQuitKeybindings()
+	return &remotePickerModel{
+		list:       l,
+		project:    project,
+		loading:    true,
+		cfg:        cfg,
+		tmuxClient: tmuxClient,
+	}
+}
+
+func (p *remotePickerModel) setBranches(branches []worktree.RemoteBranch) {
+	items := make([]list.Item, len(branches))
+	for i, b := range branches {
+		items[i] = remoteBranchItem{rb: b}
+	}
+	p.list.SetItems(items)
+	p.loading = false
+}
+
+func (p *remotePickerModel) selected() (worktree.RemoteBranch, bool) {
+	it, ok := p.list.SelectedItem().(remoteBranchItem)
+	if !ok {
+		return worktree.RemoteBranch{}, false
+	}
+	return it.rb, true
+}
+
+func (p *remotePickerModel) Update(msg tea.Msg) (*remotePickerModel, tea.Cmd) {
+	var cmd tea.Cmd
+	p.list, cmd = p.list.Update(msg)
+	return p, cmd
+}
+
+func (p *remotePickerModel) View() string {
+	switch {
+	case p.loading:
+		return "Fetching remote branches…"
+	case p.errText != "":
+		return "Error: " + p.errText + "\n\nEsc: cancel"
+	case len(p.list.Items()) == 0:
+		return "No remote branches found (try again after pushing/fetching).\n\nEsc: cancel"
+	default:
+		return p.list.View()
+	}
+}

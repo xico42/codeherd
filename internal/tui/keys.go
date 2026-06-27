@@ -8,7 +8,7 @@ type keyMap struct {
 	Clone       key.Binding
 	New         key.Binding
 	Delete      key.Binding
-	Refresh     key.Binding
+	Remote      key.Binding
 	Help        key.Binding
 	Quit        key.Binding
 	NextProfile key.Binding
@@ -37,9 +37,9 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("d"),
 			key.WithHelp("d", "delete"),
 		),
-		Refresh: key.NewBinding(
+		Remote: key.NewBinding(
 			key.WithKeys("r"),
-			key.WithHelp("r", "refresh"),
+			key.WithHelp("r", "remote"),
 		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
@@ -67,7 +67,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attach, k.Shell, k.Clone},
-		{k.New, k.Delete, k.Refresh},
+		{k.New, k.Delete, k.Remote},
 		{k.Help, k.Quit},
 	}
 }

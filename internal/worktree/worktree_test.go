@@ -107,6 +107,94 @@ func TestParseWorktreePorcelain_noTrailingNewline(t *testing.T) {
 	}
 }
 
+func TestParseRemoteBranches(t *testing.T) {
+	input := "origin/main\norigin/HEAD\norigin/feature/login\nupstream/bugfix\n"
+	got := parseRemoteBranches(input)
+	want := []RemoteBranch{
+		{Remote: "origin", Branch: "main", Ref: "origin/main"},
+		{Remote: "origin", Branch: "feature/login", Ref: "origin/feature/login"},
+		{Remote: "upstream", Branch: "bugfix", Ref: "upstream/bugfix"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestFreshenStartPoint_localBranchPreferred(t *testing.T) {
+	git := &mockGit{hasLocalBranch: true}
+	svc, _ := makeService(t, git, &mockTmuxRunner{})
+	got := svc.freshenStartPoint("/clone", "main")
+	if got != "main" {
+		t.Errorf("start point = %q, want %q", got, "main")
+	}
+	if len(git.fetchCalls) != 1 || git.fetchCalls[0] != [2]string{"origin", "main"} {
+		t.Errorf("fetch calls = %v", git.fetchCalls)
+	}
+	if len(git.fastForwardCalls) != 1 || git.fastForwardCalls[0] != [2]string{"origin", "main"} {
+		t.Errorf("fast-forward calls = %v", git.fastForwardCalls)
+	}
+}
+
+func TestFreshenStartPoint_noLocalBranchUsesRemoteTracking(t *testing.T) {
+	git := &mockGit{hasLocalBranch: false}
+	svc, _ := makeService(t, git, &mockTmuxRunner{})
+	got := svc.freshenStartPoint("/clone", "feat-x")
+	if got != "origin/feat-x" {
+		t.Errorf("start point = %q, want %q", got, "origin/feat-x")
+	}
+	if len(git.fastForwardCalls) != 0 {
+		t.Errorf("did not expect fast-forward, got %v", git.fastForwardCalls)
+	}
+}
+
+func TestFreshenStartPoint_fetchFailsFallsBackToRaw(t *testing.T) {
+	git := &mockGit{fetchErr: fmt.Errorf("no such branch")}
+	svc, _ := makeService(t, git, &mockTmuxRunner{})
+	got := svc.freshenStartPoint("/clone", "v1.2.3")
+	if got != "v1.2.3" {
+		t.Errorf("start point = %q, want %q", got, "v1.2.3")
+	}
+}
+
+func TestFreshenStartPoint_explicitRemoteRef(t *testing.T) {
+	git := &mockGit{remotesResult: []string{"origin", "upstream"}}
+	svc, _ := makeService(t, git, &mockTmuxRunner{})
+	got := svc.freshenStartPoint("/clone", "upstream/feat-x")
+	if got != "upstream/feat-x" {
+		t.Errorf("start point = %q, want %q", got, "upstream/feat-x")
+	}
+	if len(git.fetchCalls) != 1 || git.fetchCalls[0] != [2]string{"upstream", "feat-x"} {
+		t.Errorf("fetch calls = %v", git.fetchCalls)
+	}
+}
+
+func TestParseRef(t *testing.T) {
+	remotes := []string{"origin", "upstream"}
+	cases := []struct {
+		ref            string
+		remote, branch string
+		explicit       bool
+	}{
+		{"feat-x", "origin", "feat-x", false},
+		{"feature/login", "origin", "feature/login", false},
+		{"origin/feat-x", "origin", "feat-x", true},
+		{"upstream/feature/login", "upstream", "feature/login", true},
+		{"notaremote/x", "origin", "notaremote/x", false},
+	}
+	for _, tc := range cases {
+		gotR, gotB, gotE := parseRef(remotes, tc.ref)
+		if gotR != tc.remote || gotB != tc.branch || gotE != tc.explicit {
+			t.Errorf("parseRef(%q) = (%q,%q,%v), want (%q,%q,%v)",
+				tc.ref, gotR, gotB, gotE, tc.remote, tc.branch, tc.explicit)
+		}
+	}
+}
+
 // mockGit records calls and controls return values.
 type mockGit struct {
 	addErr               error
@@ -119,6 +207,23 @@ type mockGit struct {
 	listErr              error
 	addCalled            bool
 	addNewCalled         bool
+
+	fetchErr          error
+	fetchCalls        [][2]string // {remote, branch}
+	fetchAllErr       error
+	fetchAllCalled    bool
+	fastForwardErr    error
+	fastForwardCalls  [][2]string
+	remotesResult     []string
+	remotesErr        error
+	listRemoteResult  []RemoteBranch
+	listRemoteErr     error
+	addTrackingErr    error
+	addTrackingCalled bool
+	addTrackingBranch string
+	addTrackingRef    string
+	hasLocalBranch    bool
+	hasLocalBranchErr error
 }
 
 func (m *mockGit) Add(cloneDir, worktreePath, branch string) error {
@@ -137,6 +242,33 @@ func (m *mockGit) AddNewBranchFrom(cloneDir, worktreePath, branch, startPoint st
 func (m *mockGit) Remove(cloneDir, worktreePath string) error { return m.removeErr }
 func (m *mockGit) List(cloneDir string) ([]WorktreeInfo, error) {
 	return m.listResult, m.listErr
+}
+func (m *mockGit) Fetch(cloneDir, remote, branch string) error {
+	m.fetchCalls = append(m.fetchCalls, [2]string{remote, branch})
+	return m.fetchErr
+}
+func (m *mockGit) FetchAll(cloneDir string) error {
+	m.fetchAllCalled = true
+	return m.fetchAllErr
+}
+func (m *mockGit) FastForward(cloneDir, remote, branch string) error {
+	m.fastForwardCalls = append(m.fastForwardCalls, [2]string{remote, branch})
+	return m.fastForwardErr
+}
+func (m *mockGit) Remotes(cloneDir string) ([]string, error) {
+	return m.remotesResult, m.remotesErr
+}
+func (m *mockGit) ListRemoteBranches(cloneDir string) ([]RemoteBranch, error) {
+	return m.listRemoteResult, m.listRemoteErr
+}
+func (m *mockGit) AddTracking(cloneDir, worktreePath, branch, remoteRef string) error {
+	m.addTrackingCalled = true
+	m.addTrackingBranch = branch
+	m.addTrackingRef = remoteRef
+	return m.addTrackingErr
+}
+func (m *mockGit) HasLocalBranch(cloneDir, branch string) (bool, error) {
+	return m.hasLocalBranch, m.hasLocalBranchErr
 }
 
 // mockTmuxRunner controls tmux subprocess results.
@@ -224,24 +356,30 @@ func TestService_New_success(t *testing.T) {
 	}
 }
 
-func TestService_New_branchNotFound_fallsBackToAddNew(t *testing.T) {
-	git := &mockGit{addErr: fmt.Errorf("invalid reference")}
+func TestService_New_branchNotFound_createsFromFreshDefault(t *testing.T) {
+	git := &mockGit{addErr: fmt.Errorf("invalid reference"), hasLocalBranch: false}
 	svc, tmpDir := makeService(t, git, &mockTmuxRunner{})
 	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := svc.New("myapp", "new-feature")
+	result, err := svc.New("myapp", "new-feature")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !git.addNewCalled {
-		t.Error("expected AddNewBranch to be called on Add failure")
+	if !git.addNewFromCalled {
+		t.Error("expected AddNewBranchFrom to be called on Add failure")
+	}
+	if git.addNewFromStartPoint != "origin/main" {
+		t.Errorf("start point = %q, want %q", git.addNewFromStartPoint, "origin/main")
+	}
+	if result.Branch != "new-feature" {
+		t.Errorf("branch = %q, want %q", result.Branch, "new-feature")
 	}
 }
 
 func TestService_New_withFromBranch(t *testing.T) {
-	git := &mockGit{}
+	git := &mockGit{hasLocalBranch: false}
 	svc, tmpDir := makeService(t, git, &mockTmuxRunner{})
 	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
 		t.Fatal(err)
@@ -254,12 +392,138 @@ func TestService_New_withFromBranch(t *testing.T) {
 	if !git.addNewFromCalled {
 		t.Error("expected AddNewBranchFrom to be called")
 	}
-	if git.addNewFromStartPoint != "feature-auth" {
-		t.Errorf("start point = %q, want %q", git.addNewFromStartPoint, "feature-auth")
+	if git.addNewFromStartPoint != "origin/feature-auth" {
+		t.Errorf("start point = %q, want %q", git.addNewFromStartPoint, "origin/feature-auth")
+	}
+	if len(git.fetchCalls) != 1 || git.fetchCalls[0] != [2]string{"origin", "feature-auth"} {
+		t.Errorf("fetch calls = %v", git.fetchCalls)
 	}
 	expectedPath := cloneDirPath(tmpDir) + "__worktrees/my-feature"
 	if result.Path != expectedPath {
 		t.Errorf("path = %q, want %q", result.Path, expectedPath)
+	}
+}
+
+func TestService_NewTracking_success(t *testing.T) {
+	git := &mockGit{remotesResult: []string{"origin"}}
+	svc, tmpDir := makeService(t, git, &mockTmuxRunner{})
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := svc.NewTracking("myapp", "", "feat-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(git.fetchCalls) != 1 || git.fetchCalls[0] != [2]string{"origin", "feat-x"} {
+		t.Errorf("fetch calls = %v", git.fetchCalls)
+	}
+	if !git.addTrackingCalled || git.addTrackingBranch != "feat-x" || git.addTrackingRef != "origin/feat-x" {
+		t.Errorf("AddTracking branch=%q ref=%q", git.addTrackingBranch, git.addTrackingRef)
+	}
+	if result.Branch != "feat-x" {
+		t.Errorf("branch = %q, want feat-x", result.Branch)
+	}
+	expectedPath := cloneDirPath(tmpDir) + "__worktrees/feat-x"
+	if result.Path != expectedPath {
+		t.Errorf("path = %q, want %q", result.Path, expectedPath)
+	}
+}
+
+func TestService_NewTracking_overrideName(t *testing.T) {
+	git := &mockGit{remotesResult: []string{"origin", "upstream"}}
+	svc, tmpDir := makeService(t, git, &mockTmuxRunner{})
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := svc.NewTracking("myapp", "review", "upstream/feat-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if git.addTrackingBranch != "review" || git.addTrackingRef != "upstream/feat-x" {
+		t.Errorf("AddTracking branch=%q ref=%q", git.addTrackingBranch, git.addTrackingRef)
+	}
+	if result.Branch != "review" {
+		t.Errorf("branch = %q, want review", result.Branch)
+	}
+}
+
+func TestService_NewTracking_localBranchExists(t *testing.T) {
+	git := &mockGit{remotesResult: []string{"origin"}, hasLocalBranch: true}
+	svc, tmpDir := makeService(t, git, &mockTmuxRunner{})
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.NewTracking("myapp", "", "feat-x")
+	if !errors.Is(err, ErrLocalBranchExists) {
+		t.Errorf("expected ErrLocalBranchExists, got %v", err)
+	}
+	if git.addTrackingCalled {
+		t.Error("AddTracking should not be called when the branch already exists")
+	}
+}
+
+func TestService_NewTracking_fetchFails(t *testing.T) {
+	git := &mockGit{remotesResult: []string{"origin"}, fetchErr: fmt.Errorf("no such ref")}
+	svc, tmpDir := makeService(t, git, &mockTmuxRunner{})
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.NewTracking("myapp", "", "feat-x")
+	if err == nil {
+		t.Fatal("expected error when fetch fails")
+	}
+	if git.addTrackingCalled {
+		t.Error("AddTracking should not run after a failed fetch")
+	}
+}
+
+func TestService_NewTracking_notCloned(t *testing.T) {
+	svc, _ := makeService(t, &mockGit{remotesResult: []string{"origin"}}, &mockTmuxRunner{})
+	_, err := svc.NewTracking("myapp", "", "feat-x")
+	if !errors.Is(err, ErrNotCloned) {
+		t.Errorf("expected ErrNotCloned, got %v", err)
+	}
+}
+
+func TestService_RemoteBranches_fetchesThenLists(t *testing.T) {
+	git := &mockGit{listRemoteResult: []RemoteBranch{{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"}}}
+	svc, tmpDir := makeService(t, git, &mockTmuxRunner{})
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.RemoteBranches("myapp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !git.fetchAllCalled {
+		t.Error("expected FetchAll to be called")
+	}
+	if len(got) != 1 || got[0].Ref != "origin/feat-x" {
+		t.Errorf("branches = %+v", got)
+	}
+}
+
+func TestService_ListRemoteBranches_noFetch(t *testing.T) {
+	git := &mockGit{listRemoteResult: []RemoteBranch{{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"}}}
+	svc, tmpDir := makeService(t, git, &mockTmuxRunner{})
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.ListRemoteBranches("myapp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if git.fetchAllCalled {
+		t.Error("ListRemoteBranches must not fetch")
+	}
+	if len(got) != 1 {
+		t.Errorf("branches = %+v", got)
 	}
 }
 
@@ -311,8 +575,8 @@ func TestService_NewFrom_unknownProject(t *testing.T) {
 
 func TestService_New_bothAddsFail(t *testing.T) {
 	git := &mockGit{
-		addErr:    fmt.Errorf("invalid reference"),
-		addNewErr: fmt.Errorf("already exists"),
+		addErr:        fmt.Errorf("invalid reference"),
+		addNewFromErr: fmt.Errorf("already exists"),
 	}
 	svc, tmpDir := makeService(t, git, &mockTmuxRunner{})
 	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
@@ -321,7 +585,7 @@ func TestService_New_bothAddsFail(t *testing.T) {
 
 	_, err := svc.New("myapp", "new-feature")
 	if err == nil {
-		t.Fatal("expected error when both Add and AddNewBranch fail")
+		t.Fatal("expected error when both Add and AddNewBranchFrom fail")
 	}
 }
 

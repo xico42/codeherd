@@ -186,3 +186,22 @@ func TestDelegate_Render_noBranch(t *testing.T) {
 		t.Errorf("render should not have ' / ' for project-only items, got: %q", out)
 	}
 }
+
+func TestDelegate_Render_headHint(t *testing.T) {
+	d := newDelegate()
+	m := list.New([]list.Item{
+		Item{Project: "myapp", Branch: "feature", Group: groupAgent, HasAgent: true,
+			AgentStatus: semconv.StatusRunning, HeadHint: "detached"},
+	}, d, 80, 10)
+
+	var buf bytes.Buffer
+	d.Render(&buf, m, 0, m.Items()[0])
+	out := buf.String()
+
+	if !strings.Contains(out, "feature") {
+		t.Errorf("render missing branch, got: %q", out)
+	}
+	if !strings.Contains(out, "detached") {
+		t.Errorf("render missing head hint, got: %q", out)
+	}
+}

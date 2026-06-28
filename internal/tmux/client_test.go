@@ -150,6 +150,37 @@ func TestClient_ListSessions_missingProfileIsEmpty(t *testing.T) {
 	}
 }
 
+func TestClient_ListSessions_readsBranchOption(t *testing.T) {
+	// 9-field line: branch populated as the final field.
+	line := "$1\tmyapp-feat\tmyapp-feat\tagent\trunning\t\t2026-01-01T00:00:00Z\twork\tfeature/login\n"
+	r := &mockRunner{exitCode: 0, stdout: line}
+	c := tmux.NewClient(r)
+	records, err := c.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(records))
+	}
+	if records[0].Branch != "feature/login" {
+		t.Errorf("Branch = %q, want feature/login", records[0].Branch)
+	}
+}
+
+func TestClient_ListSessions_missingBranchIsEmpty(t *testing.T) {
+	// Old 8-field line (pre-upgrade session): Branch must default to "".
+	line := "$1\tmyapp-feat\tmyapp-feat\tagent\trunning\t\t2026-01-01T00:00:00Z\twork\n"
+	r := &mockRunner{exitCode: 0, stdout: line}
+	c := tmux.NewClient(r)
+	records, err := c.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if records[0].Branch != "" {
+		t.Errorf("Branch = %q, want empty", records[0].Branch)
+	}
+}
+
 func TestClient_ListSessions_prefixedAndShell(t *testing.T) {
 	lines := "$2\t⚡ myapp-feat\tmyapp-feat\tagent\twaiting\tneed input\t\n" +
 		"$3\tmyapp-feat~sh\tmyapp-feat\tshell\t\t\t\n"

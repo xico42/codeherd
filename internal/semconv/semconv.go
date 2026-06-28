@@ -14,6 +14,7 @@ const (
 	TmuxOptionCanonicalName = "@codeherd_canonical_name"
 	TmuxOptionSessionType   = "@codeherd_session_type"
 	TmuxOptionProfile       = "@codeherd_profile"
+	TmuxOptionBranch        = "@codeherd_branch"
 
 	StatusRunning = "running"
 	StatusWaiting = "waiting"
@@ -58,6 +59,24 @@ const (
 
 func FlattenBranch(branch string) string {
 	return strings.ReplaceAll(branch, "/", "-")
+}
+
+// WorktreeIdentityBranch returns the stable identity branch for a worktree —
+// the branch the worktree was created for, regardless of where HEAD points now.
+// Feeding it into SessionName recovers the session's frozen canonical name.
+//
+// Worktrees under "<clone>__worktrees/" are named FlattenBranch(branch), so the
+// directory base name is the (flattened) identity. The main clone dir is named
+// after the repo rather than a branch, so its identity is the configured default
+// branch, falling back to the live branch when no default is configured.
+func WorktreeIdentityBranch(path, cloneDir, defaultBranch, liveBranch string) string {
+	if path == cloneDir {
+		if defaultBranch != "" {
+			return defaultBranch
+		}
+		return liveBranch
+	}
+	return filepath.Base(path)
 }
 
 // SessionName returns the canonical tmux session name.

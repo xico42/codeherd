@@ -145,6 +145,7 @@ func (s *Service) Start(req StartRequest) (string, error) {
 	_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionStartedAt, now.Format(time.RFC3339))
 	_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionCanonicalName, canonicalName)
 	_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionSessionType, req.Type)
+	_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionBranch, req.Branch)
 	if req.Profile != "" {
 		_ = s.tmux.SetOption(tmuxName, semconv.TmuxOptionProfile, req.Profile)
 	}

@@ -101,6 +101,7 @@ func TestStart_OK(t *testing.T) {
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0},                 // set-option branch
 	}}
 	tc := tmux.NewClient(r2)
 	svc := session.NewService(tc, &mockHook{})
@@ -119,8 +120,44 @@ func TestStart_OK(t *testing.T) {
 	if sessionID != "$1" {
 		t.Errorf("Start() sessionID = %q, want $1", sessionID)
 	}
-	if len(r2.calls) != 6 {
-		t.Errorf("expected 6 tmux calls, got %d: %v", len(r2.calls), r2.calls)
+	if len(r2.calls) != 7 {
+		t.Errorf("expected 7 tmux calls, got %d: %v", len(r2.calls), r2.calls)
+	}
+}
+
+func TestStart_StampsBranchOption(t *testing.T) {
+	r := &mockRunnerSequence{responses: []mockResponse{
+		{exitCode: 1},                 // list-sessions → empty
+		{exitCode: 0, stdout: "$1\n"}, // new-session → ok
+		{exitCode: 0},                 // set-option status
+		{exitCode: 0},                 // set-option started_at
+		{exitCode: 0},                 // set-option canonical_name
+		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0},                 // set-option branch
+	}}
+	tc := tmux.NewClient(r)
+	svc := session.NewService(tc, &mockHook{})
+
+	if _, err := svc.Start(session.StartRequest{
+		Project: "myapp",
+		Branch:  "feature/login",
+		Path:    t.TempDir(),
+		Cmd:     "claude",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	found := false
+	for _, call := range r.calls {
+		// SetOption runs: ("set-option", "-t", <name>, <option>, <value>)
+		if len(call) >= 5 && call[0] == "set-option" &&
+			call[3] == semconv.TmuxOptionBranch && call[4] == "feature/login" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a set-option %s feature/login call, calls: %v",
+			semconv.TmuxOptionBranch, r.calls)
 	}
 }
 
@@ -542,6 +579,7 @@ func TestService_List_IncludesShellSessions(t *testing.T) {
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0},                 // set-option branch
 		// --- Second Start (shell) ---
 		{exitCode: 0, stdout: "$1\tapp-main\tapp-main\tagent\trunning\t\t\n"},
 		{exitCode: 0, stdout: "$2\n"}, // new-session → returns session_id via -P -F
@@ -549,6 +587,7 @@ func TestService_List_IncludesShellSessions(t *testing.T) {
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0},                 // set-option branch
 		// --- List() ---
 		{exitCode: 0, stdout: "$1\tapp-main\tapp-main\tagent\trunning\t\t\n" +
 			"$2\tapp-main~sh\tapp-main\tshell\trunning\t\t\n"},
@@ -687,6 +726,7 @@ func TestService_Start_ShellAndAgentCoexist(t *testing.T) {
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0},                 // set-option branch
 		// --- Second Start (shell) ---
 		// list-sessions returns the existing agent session; shell has different type so no conflict
 		{exitCode: 0, stdout: "$1\tapp-main\tapp-main\tagent\trunning\t\t\n"},
@@ -695,6 +735,7 @@ func TestService_Start_ShellAndAgentCoexist(t *testing.T) {
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0},                 // set-option branch
 		// --- Third Start (duplicate agent) ---
 		// list-sessions returns both sessions; agent canonical name matches → ErrSessionExists
 		{exitCode: 0, stdout: "$1\tapp-main\tapp-main\tagent\trunning\t\t\n" +
@@ -773,6 +814,7 @@ func TestService_Show_ShellType(t *testing.T) {
 		{exitCode: 0},                 // set-option started_at
 		{exitCode: 0},                 // set-option canonical_name
 		{exitCode: 0},                 // set-option session_type
+		{exitCode: 0},                 // set-option branch
 		// --- Show(shell) ---
 		{exitCode: 0, stdout: "$1\tapp-main~sh\tapp-main\tshell\trunning\t\t\n"},
 		// --- Show(agent) ---

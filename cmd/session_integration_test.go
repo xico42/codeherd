@@ -37,7 +37,7 @@ func initBareRepo(t *testing.T, cloneDir string) {
 	t.Helper()
 	os.MkdirAll(cloneDir, 0o755)
 	cmds := [][]string{
-		{"git", "init", cloneDir},
+		{"git", "init", "-b", "main", cloneDir},
 		{"git", "-C", cloneDir, "config", "user.email", "test@test.com"},
 		{"git", "-C", cloneDir, "config", "user.name", "Test"},
 		{"git", "-C", cloneDir, "commit", "--allow-empty", "-m", "init"},

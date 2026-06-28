@@ -28,7 +28,8 @@ type Item struct {
 	HasShell       bool
 	ShellSessionID string // tmux session_id — stable identifier for attach
 	Cloned         bool
-	IsMain         bool // true for the main worktree (clone dir)
+	IsMain         bool   // true for the main worktree (clone dir)
+	HeadHint       string // "detached" / "on <branch>" when HEAD diverged from identity, else ""
 }
 
 func (i Item) FilterValue() string {
@@ -40,18 +41,21 @@ func (i Item) FilterValue() string {
 
 // refreshResult holds raw data collected during a refresh cycle.
 type refreshResult struct {
-	worktrees     []wtEntry
-	agentSessions map[string]agentInfo // keyed by canonical session name
-	shellSessions map[string]string    // canonical session name → tmux session_id
-	projects      []projEntry
-	cloneDirs     map[string]string // project name -> clone dir path
-	profile       string            // active profile, "" when profile mode is off
+	worktrees       []wtEntry
+	agentSessions   map[string]agentInfo // keyed by canonical session name
+	shellSessions   map[string]string    // canonical session name → tmux session_id
+	sessionBranch   map[string]string    // canonical session name → raw branch (@codeherd_branch)
+	projects        []projEntry
+	cloneDirs       map[string]string // project name -> clone dir path
+	defaultBranches map[string]string // project name -> config.DefaultBranch
+	profile         string            // active profile, "" when profile mode is off
 }
 
 type wtEntry struct {
-	project string
-	branch  string
-	path    string
+	project  string
+	branch   string
+	path     string
+	detached bool
 }
 
 type agentInfo struct {
@@ -74,16 +78,44 @@ func buildItems(data refreshResult) []list.Item {
 	for _, wt := range data.worktrees {
 		projectHasWorktree[wt.project] = true
 
-		sessionName := semconv.SessionName(data.profile, wt.project, wt.branch)
+		cloneDir := data.cloneDirs[wt.project]
+		isMain := cloneDir == wt.path
+		defaultBranch := data.defaultBranches[wt.project]
+
+		identity := semconv.WorktreeIdentityBranch(wt.path, cloneDir, defaultBranch, wt.branch)
+		sessionName := semconv.SessionName(data.profile, wt.project, identity)
+
+		// Determine whether HEAD has diverged from the identity branch.
+		identityFlat := semconv.FlattenBranch(identity)
+		displayBranch := wt.branch
+		headHint := ""
+		switch {
+		case wt.detached:
+			headHint = "detached"
+		case wt.branch != "" && semconv.FlattenBranch(wt.branch) != identityFlat:
+			headHint = "on " + wt.branch
+		}
+		if headHint != "" {
+			// Diverged: prefer the session's recorded raw branch, then config
+			// (clone dir), then the folder name.
+			if raw := data.sessionBranch[sessionName]; raw != "" {
+				displayBranch = raw
+			} else if isMain && defaultBranch != "" {
+				displayBranch = defaultBranch
+			} else {
+				displayBranch = identityFlat
+			}
+		}
 
 		shellID := data.shellSessions[sessionName]
 		item := Item{
 			Project:        wt.project,
-			Branch:         wt.branch,
+			Branch:         displayBranch,
 			Path:           wt.path,
 			HasShell:       shellID != "",
 			ShellSessionID: shellID,
-			IsMain:         data.cloneDirs[wt.project] == wt.path,
+			IsMain:         isMain,
+			HeadHint:       headHint,
 		}
 
 		if agent, ok := data.agentSessions[sessionName]; ok {

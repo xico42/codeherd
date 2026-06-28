@@ -27,16 +27,18 @@ var (
 
 // WorktreeInfo holds data from a single git worktree entry.
 type WorktreeInfo struct {
-	Path   string
-	Branch string // empty if detached HEAD
+	Path     string
+	Branch   string // empty if detached HEAD
+	Detached bool   // true when HEAD is detached (e.g. rebase in progress)
 }
 
 // ListEntry is one row in the worktree list output.
 type ListEntry struct {
-	Project string
-	Branch  string
-	Path    string
-	Session string // "<name>-<branch> (running)" or ""
+	Project  string
+	Branch   string
+	Path     string
+	Session  string // "<name>-<branch> (running)" or ""
+	Detached bool   // true when the worktree's HEAD is detached
 }
 
 // NewResult is the result of a successful worktree creation.
@@ -232,6 +234,8 @@ func parseWorktreePorcelain(output string) []WorktreeInfo {
 		case strings.HasPrefix(line, "branch "):
 			ref := strings.TrimPrefix(line, "branch ")
 			current.Branch = strings.TrimPrefix(ref, "refs/heads/")
+		case line == "detached":
+			current.Detached = true
 		case line == "":
 			if current.Path != "" {
 				result = append(result, current)
@@ -583,18 +587,20 @@ func (s *Service) List(project string) ([]ListEntry, error) {
 		}
 
 		for _, wt := range worktrees {
+			identity := semconv.WorktreeIdentityBranch(wt.Path, cd, p.DefaultBranch, wt.Branch)
 			session := ""
-			if wt.Branch != "" {
-				candidate := semconv.SessionName("", name, wt.Branch)
+			if identity != "" {
+				candidate := semconv.SessionName("", name, identity)
 				if running, _ := s.tmux.HasSession(candidate); running {
 					session = candidate + " (running)"
 				}
 			}
 			entries = append(entries, ListEntry{
-				Project: name,
-				Branch:  wt.Branch,
-				Path:    wt.Path,
-				Session: session,
+				Project:  name,
+				Branch:   wt.Branch,
+				Path:     wt.Path,
+				Session:  session,
+				Detached: wt.Detached,
 			})
 		}
 	}

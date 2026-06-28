@@ -171,6 +171,32 @@ func TestHookAttrConstants_HavePrefix(t *testing.T) {
 	}
 }
 
+func TestWorktreeIdentityBranch(t *testing.T) {
+	tests := []struct {
+		name, path, cloneDir, defaultBranch, liveBranch, want string
+	}{
+		{"worktree dir uses folder name", "/p/github.com/u/app__worktrees/feature-x", "/p/github.com/u/app", "main", "", "feature-x"},
+		{"worktree dir ignores live branch", "/p/github.com/u/app__worktrees/feature-x", "/p/github.com/u/app", "main", "other", "feature-x"},
+		{"clone dir uses default branch", "/p/github.com/u/app", "/p/github.com/u/app", "main", "", "main"},
+		{"clone dir falls back to live branch when default unset", "/p/github.com/u/app", "/p/github.com/u/app", "", "develop", "develop"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := semconv.WorktreeIdentityBranch(tc.path, tc.cloneDir, tc.defaultBranch, tc.liveBranch)
+			if got != tc.want {
+				t.Errorf("WorktreeIdentityBranch(%q,%q,%q,%q) = %q, want %q",
+					tc.path, tc.cloneDir, tc.defaultBranch, tc.liveBranch, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTmuxOptionBranch_constant(t *testing.T) {
+	if semconv.TmuxOptionBranch != "@codeherd_branch" {
+		t.Errorf("TmuxOptionBranch = %q, want @codeherd_branch", semconv.TmuxOptionBranch)
+	}
+}
+
 func TestNewSemconvConstants(t *testing.T) {
 	if semconv.TmuxOptionCanonicalName != "@codeherd_canonical_name" {
 		t.Errorf("TmuxOptionCanonicalName = %q", semconv.TmuxOptionCanonicalName)

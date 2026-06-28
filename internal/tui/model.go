@@ -412,9 +412,11 @@ func (m Model) refreshCmd() tea.Cmd {
 
 	return func() tea.Msg {
 		data := refreshResult{
-			agentSessions: make(map[string]agentInfo),
-			shellSessions: make(map[string]string),
-			profile:       activeProfile,
+			agentSessions:   make(map[string]agentInfo),
+			shellSessions:   make(map[string]string),
+			sessionBranch:   make(map[string]string),
+			defaultBranches: make(map[string]string),
+			profile:         activeProfile,
 		}
 
 		// 1. Worktrees
@@ -423,9 +425,10 @@ func (m Model) refreshCmd() tea.Cmd {
 			if err == nil {
 				for _, e := range entries {
 					data.worktrees = append(data.worktrees, wtEntry{
-						project: e.Project,
-						branch:  e.Branch,
-						path:    e.Path,
+						project:  e.Project,
+						branch:   e.Branch,
+						path:     e.Path,
+						detached: e.Detached,
 					})
 				}
 			}
@@ -453,6 +456,7 @@ func (m Model) refreshCmd() tea.Cmd {
 							annotation: r.Annotation,
 						}
 					}
+					data.sessionBranch[r.CanonicalName] = r.Branch
 				}
 			}
 		}
@@ -476,6 +480,7 @@ func (m Model) refreshCmd() tea.Cmd {
 		if cfg != nil {
 			data.cloneDirs = make(map[string]string)
 			for name, p := range cfg.Projects {
+				data.defaultBranches[name] = p.DefaultBranch
 				if rp, err := config.RepoPath(p.Repo); err == nil {
 					data.cloneDirs[name] = semconv.CloneDir(cfg.Defaults.ProjectsDir, rp)
 				}

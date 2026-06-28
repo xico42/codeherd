@@ -197,8 +197,8 @@ func TestBuildItems_isMain_noCfg(t *testing.T) {
 func TestBuildItems_waitingSortsBeforeRunning(t *testing.T) {
 	data := refreshResult{
 		worktrees: []wtEntry{
-			{project: "myapp", branch: "running-branch", path: "/p/wt/running"},
-			{project: "myapp", branch: "waiting-branch", path: "/p/wt/waiting"},
+			{project: "myapp", branch: "running-branch", path: "/p/wt/running-branch"},
+			{project: "myapp", branch: "waiting-branch", path: "/p/wt/waiting-branch"},
 		},
 		agentSessions: map[string]agentInfo{
 			"myapp-running-branch": {status: semconv.StatusRunning},
@@ -227,9 +227,9 @@ func TestBuildItems_waitingSortsBeforeRunning(t *testing.T) {
 func TestBuildItems_alphabeticalWithinGroup(t *testing.T) {
 	data := refreshResult{
 		worktrees: []wtEntry{
-			{project: "zoo", branch: "main", path: "/p/wt/1"},
-			{project: "alpha", branch: "main", path: "/p/wt/2"},
-			{project: "alpha", branch: "beta", path: "/p/wt/3"},
+			{project: "zoo", branch: "main", path: "/p/zoo__worktrees/main"},
+			{project: "alpha", branch: "main", path: "/p/alpha__worktrees/main"},
+			{project: "alpha", branch: "beta", path: "/p/alpha__worktrees/beta"},
 		},
 		agentSessions: map[string]agentInfo{},
 		shellSessions: map[string]string{},
@@ -257,5 +257,116 @@ func TestBuildItems_alphabeticalWithinGroup(t *testing.T) {
 	}
 	if i2.Project != "zoo" {
 		t.Errorf("item 2: got %s, want zoo", i2.Project)
+	}
+}
+
+func TestBuildItems_detachedWorktreeStillCorrelates(t *testing.T) {
+	data := refreshResult{
+		worktrees: []wtEntry{
+			{project: "myapp", branch: "", path: "/p/myapp__worktrees/feature", detached: true},
+		},
+		agentSessions: map[string]agentInfo{
+			"myapp-feature": {sessionID: "$1", status: semconv.StatusRunning},
+		},
+		shellSessions:   map[string]string{},
+		cloneDirs:       map[string]string{"myapp": "/p/myapp"},
+		defaultBranches: map[string]string{"myapp": "main"},
+		sessionBranch:   map[string]string{"myapp-feature": "feature"},
+	}
+
+	items := buildItems(data)
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	it := items[0].(Item)
+	if !it.HasAgent || it.AgentSessionID != "$1" {
+		t.Errorf("detached worktree lost its agent session: %+v", it)
+	}
+	if it.HeadHint != "detached" {
+		t.Errorf("HeadHint = %q, want detached", it.HeadHint)
+	}
+	if it.Branch != "feature" {
+		t.Errorf("Branch = %q, want feature (from @codeherd_branch)", it.Branch)
+	}
+}
+
+func TestBuildItems_otherBranchCheckedOut(t *testing.T) {
+	data := refreshResult{
+		worktrees: []wtEntry{
+			{project: "myapp", branch: "hotfix", path: "/p/myapp__worktrees/feature"},
+		},
+		agentSessions: map[string]agentInfo{
+			"myapp-feature": {sessionID: "$2", status: semconv.StatusRunning},
+		},
+		shellSessions:   map[string]string{},
+		cloneDirs:       map[string]string{"myapp": "/p/myapp"},
+		defaultBranches: map[string]string{"myapp": "main"},
+		sessionBranch:   map[string]string{}, // pre-upgrade session: no raw branch
+	}
+
+	items := buildItems(data)
+	it := items[0].(Item)
+	if !it.HasAgent || it.AgentSessionID != "$2" {
+		t.Errorf("worktree with other branch lost its session: %+v", it)
+	}
+	if it.HeadHint != "on hotfix" {
+		t.Errorf("HeadHint = %q, want 'on hotfix'", it.HeadHint)
+	}
+	if it.Branch != "feature" {
+		t.Errorf("Branch = %q, want feature (folder fallback)", it.Branch)
+	}
+}
+
+func TestBuildItems_cloneDirCorrelatesViaDefaultBranch(t *testing.T) {
+	data := refreshResult{
+		worktrees: []wtEntry{
+			{project: "myapp", branch: "", path: "/p/myapp", detached: true},
+		},
+		agentSessions: map[string]agentInfo{
+			"myapp-main": {sessionID: "$3", status: semconv.StatusRunning},
+		},
+		shellSessions:   map[string]string{},
+		cloneDirs:       map[string]string{"myapp": "/p/myapp"},
+		defaultBranches: map[string]string{"myapp": "main"},
+		sessionBranch:   map[string]string{},
+	}
+
+	items := buildItems(data)
+	it := items[0].(Item)
+	if !it.HasAgent || it.AgentSessionID != "$3" {
+		t.Errorf("clone-dir worktree lost its session: %+v", it)
+	}
+	if it.HeadHint != "detached" {
+		t.Errorf("HeadHint = %q, want detached", it.HeadHint)
+	}
+	if !it.IsMain {
+		t.Errorf("expected IsMain=true for clone dir")
+	}
+	if it.Branch != "main" {
+		t.Errorf("Branch = %q, want main (from config default)", it.Branch)
+	}
+}
+
+func TestBuildItems_normalWorktreeNoHint(t *testing.T) {
+	data := refreshResult{
+		worktrees: []wtEntry{
+			{project: "myapp", branch: "feature", path: "/p/myapp__worktrees/feature"},
+		},
+		agentSessions: map[string]agentInfo{
+			"myapp-feature": {sessionID: "$4", status: semconv.StatusRunning},
+		},
+		shellSessions:   map[string]string{},
+		cloneDirs:       map[string]string{"myapp": "/p/myapp"},
+		defaultBranches: map[string]string{"myapp": "main"},
+		sessionBranch:   map[string]string{"myapp-feature": "feature"},
+	}
+
+	items := buildItems(data)
+	it := items[0].(Item)
+	if it.HeadHint != "" {
+		t.Errorf("HeadHint = %q, want empty for non-diverged worktree", it.HeadHint)
+	}
+	if it.Branch != "feature" {
+		t.Errorf("Branch = %q, want feature", it.Branch)
 	}
 }

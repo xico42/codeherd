@@ -107,6 +107,50 @@ func TestParseWorktreePorcelain_noTrailingNewline(t *testing.T) {
 	}
 }
 
+func TestParseWorktreePorcelain_detachedFlag(t *testing.T) {
+	input := "worktree /p/myapp__worktrees/detached\nHEAD ghi789\ndetached\n\n"
+	got := parseWorktreePorcelain(input)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if !got[0].Detached {
+		t.Errorf("expected Detached=true for detached HEAD entry")
+	}
+	if got[0].Branch != "" {
+		t.Errorf("expected empty Branch for detached HEAD, got %q", got[0].Branch)
+	}
+}
+
+func TestService_List_cloneDirDetachedUsesDefaultBranch(t *testing.T) {
+	// The clone-dir worktree is detached (e.g. mid-rebase): no live branch.
+	// Correlation must fall back to config DefaultBranch ("main") so the
+	// session is still found and Detached is surfaced.
+	git := &mockGit{
+		listResult: []WorktreeInfo{
+			{Path: "", Branch: "", Detached: true}, // Path filled in below
+		},
+	}
+	svc, tmpDir := makeService(t, git, &mockTmuxRunner{exitCode: 0}) // exit 0 = session exists
+	git.listResult[0].Path = cloneDirPath(tmpDir)
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := svc.List("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Session == "" {
+		t.Errorf("expected session populated via DefaultBranch identity, got empty")
+	}
+	if !entries[0].Detached {
+		t.Errorf("expected Detached=true on entry")
+	}
+}
+
 func TestParseRemoteBranches(t *testing.T) {
 	input := "origin/main\norigin/HEAD\norigin/feature/login\nupstream/bugfix\n"
 	got := parseRemoteBranches(input)

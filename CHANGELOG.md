@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add Unreleased entries here. -->
 
+## [0.2.0] - 2026-07-06
+
+### Added
+
+- `create worktree --track [<remote>/]<branch>` fetches a remote branch and checks it out into a worktree that tracks it, deriving the local name from the remote branch when the branch argument is omitted. Every creation path now freshens its source first, fast-forwarding a matching local branch with `--ff-only` before branching, and the TUI rebinds `r` to a filterable remote-branch picker.
+- The TUI shows an animated busy spinner during slow git operations — creating a worktree, cloning a project, and fetching remote branches — and ignores input other than quit until the operation finishes.
+- `ch run <agent> -- <args>` forwards every token after `--` to the agent verbatim, appended after its configured arguments, so per-invocation flags reach the agent without editing config.
+
+### Fixed
+
+- The dashboard and `ch list worktree` keep a worktree's tmux session visible after its HEAD diverges from the branch it was created for, so a rebase or a branch checkout no longer makes a running agent disappear; the listing annotates a diverged worktree with its live state (`detached` or `on <branch>`).
+
 ## [0.1.0] - 2026-05-28
 
 ### Added
@@ -28,5 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ch run <agent>` replaces the current process with a registered agent in the foreground, inherits the shell environment, and skips the tmux and worktree lifecycle.
 - Shell completion suggests project, branch, agent, and profile names dynamically.
 
-[Unreleased]: https://github.com/xico42/codeherd/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/xico42/codeherd/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/xico42/codeherd/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/xico42/codeherd/releases/tag/v0.1.0

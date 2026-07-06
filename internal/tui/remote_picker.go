@@ -22,7 +22,6 @@ func (i remoteBranchItem) Description() string { return "" }
 type remotePickerModel struct {
 	list       list.Model
 	project    string
-	loading    bool
 	errText    string
 	cfg        *config.Config
 	tmuxClient *tmux.Client
@@ -37,7 +36,6 @@ func newRemotePicker(project string, cfg *config.Config, tmuxClient *tmux.Client
 	return &remotePickerModel{
 		list:       l,
 		project:    project,
-		loading:    true,
 		cfg:        cfg,
 		tmuxClient: tmuxClient,
 	}
@@ -49,7 +47,6 @@ func (p *remotePickerModel) setBranches(branches []worktree.RemoteBranch) {
 		items[i] = remoteBranchItem{rb: b}
 	}
 	p.list.SetItems(items)
-	p.loading = false
 }
 
 func (p *remotePickerModel) selected() (worktree.RemoteBranch, bool) {
@@ -68,8 +65,6 @@ func (p *remotePickerModel) Update(msg tea.Msg) (*remotePickerModel, tea.Cmd) {
 
 func (p *remotePickerModel) View() string {
 	switch {
-	case p.loading:
-		return "Fetching remote branches…"
 	case p.errText != "":
 		return "Error: " + p.errText + "\n\nEsc: cancel"
 	case len(p.list.Items()) == 0:

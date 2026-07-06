@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/xico42/codeherd/internal/config"
@@ -703,5 +705,158 @@ func TestSwitchProfile_loadFailurePreservesActive(t *testing.T) {
 	}
 	if m2.StatusMsgForTest() == "" {
 		t.Error("expected statusMsg to describe the failure")
+	}
+}
+
+func TestEnterBusy_setsLabelAndBatchesTick(t *testing.T) {
+	m := Model{}
+	called := false
+	cmd := func() tea.Msg { called = true; return nil }
+
+	m2, batched := m.enterBusy("Working…", cmd)
+
+	if m2.busy != "Working…" {
+		t.Errorf("busy = %q, want %q", m2.busy, "Working…")
+	}
+	if batched == nil {
+		t.Fatal("enterBusy returned nil cmd, want batched cmd")
+	}
+	_ = called // cmd is not executed here; we only assert it was batched (non-nil).
+}
+
+func TestUpdate_spinnerTickIgnoredWhenNotBusy(t *testing.T) {
+	m := Model{busy: ""}
+
+	_, cmd := m.Update(spinner.TickMsg{})
+
+	if cmd != nil {
+		t.Error("spinner.TickMsg while not busy should not re-issue a tick")
+	}
+}
+
+func TestUpdate_spinnerTickAdvancesWhenBusy(t *testing.T) {
+	m := Model{busy: "Working…", spinner: spinner.New()}
+
+	_, cmd := m.Update(spinner.TickMsg{})
+
+	if cmd == nil {
+		t.Error("spinner.TickMsg while busy should re-issue a tick")
+	}
+}
+
+func TestUpdate_swallowsKeysWhileBusy(t *testing.T) {
+	m := Model{busy: "Working…", screen: screenList, keys: defaultKeyMap()}
+	m.list = newList(nil)
+
+	// A non-quit key is a no-op while busy.
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'n', Text: "n"}))
+	um := updated.(Model)
+	if cmd != nil {
+		t.Error("non-quit key while busy should return nil cmd")
+	}
+	if um.screen != screenList {
+		t.Errorf("screen changed to %d while busy, want unchanged", um.screen)
+	}
+
+	// Quit still quits.
+	_, quitCmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
+	if quitCmd == nil {
+		t.Error("quit key while busy should return a cmd")
+	}
+}
+
+func TestView_rendersBusyScreen(t *testing.T) {
+	m := Model{busy: "Creating worktree…", spinner: spinner.New(), width: 40, height: 10}
+	m.list = newList(nil)
+
+	v := m.View()
+
+	if !strings.Contains(v.Content, "Creating worktree…") {
+		t.Errorf("busy view should contain the label; got:\n%s", v.Content)
+	}
+}
+
+func TestView_normalWhenNotBusy(t *testing.T) {
+	m := Model{busy: "", screen: screenList, spinner: spinner.New(), width: 40, height: 10}
+	m.list = newList(nil)
+	m.help = help.New()
+	m.keys = defaultKeyMap()
+
+	v := m.View()
+
+	if strings.Contains(v.Content, "Creating worktree…") {
+		t.Error("non-busy view should not contain a busy label")
+	}
+}
+
+func TestUpdate_resultMessagesClearBusy(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  tea.Msg
+	}{
+		{"errMsg", errMsg{err: errors.New("boom")}},
+		{"cloneDoneMsg", cloneDoneMsg{project: "myapp"}},
+		{"worktreeCreatedMsg", worktreeCreatedMsg{project: "myapp", branch: "feat"}},
+		{"remoteBranchesMsg", remoteBranchesMsg{project: "myapp"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModelForResultTest()
+			m.busy = "Working…"
+
+			updated, _ := m.Update(tt.msg)
+
+			if updated.(Model).busy != "" {
+				t.Errorf("%s did not clear busy", tt.name)
+			}
+		})
+	}
+}
+
+// newModelForResultTest builds a minimal Model that can absorb result
+// messages without a nil-pointer (refreshCmd/list access after clearing busy).
+func newModelForResultTest() Model {
+	m := Model{screen: screenList}
+	m.list = newList(nil)
+	m.cfg = &config.Config{}
+	return m
+}
+
+func TestUpdate_cloneSetsBusy(t *testing.T) {
+	m := Model{screen: screenList, keys: defaultKeyMap(), spinner: spinner.New()}
+	m.list = newList(toListItems([]Item{
+		{Project: "myapp", Group: groupProject, Cloned: false},
+	}))
+	m.cfg = &config.Config{Projects: map[string]config.ProjectConfig{"myapp": {}}}
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Text: "c"}))
+	um := updated.(Model)
+
+	if um.busy != "Cloning myapp…" {
+		t.Errorf("busy = %q, want %q", um.busy, "Cloning myapp…")
+	}
+	if cmd == nil {
+		t.Error("clone should return a batched cmd")
+	}
+}
+
+func TestStartRemotePicker_setsBusy(t *testing.T) {
+	m := Model{screen: screenList, spinner: spinner.New()}
+	m.list = newList(toListItems([]Item{
+		{Project: "myapp", Group: groupProject, Cloned: true},
+	}))
+	m.cfg = &config.Config{}
+
+	updated, cmd := m.startRemotePicker()
+	um := updated.(Model)
+
+	if um.busy != "Fetching remote branches…" {
+		t.Errorf("busy = %q, want %q", um.busy, "Fetching remote branches…")
+	}
+	if um.screen != screenRemotePicker {
+		t.Errorf("screen = %d, want screenRemotePicker", um.screen)
+	}
+	if cmd == nil {
+		t.Error("startRemotePicker should return a batched cmd")
 	}
 }

@@ -9,16 +9,10 @@ import (
 
 func TestRemotePicker_setAndSelect(t *testing.T) {
 	p := newRemotePicker("myapp", &config.Config{}, nil)
-	if !p.loading {
-		t.Error("picker should start in loading state")
-	}
 	p.setBranches([]worktree.RemoteBranch{
 		{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"},
 		{Remote: "origin", Branch: "fix-y", Ref: "origin/fix-y"},
 	})
-	if p.loading {
-		t.Error("picker should leave loading state after setBranches")
-	}
 	rb, ok := p.selected()
 	if !ok || rb.Ref != "origin/feat-x" {
 		t.Errorf("selected = %+v ok=%v, want origin/feat-x", rb, ok)
@@ -40,9 +34,6 @@ func TestRemoteBranchesMsg_populatesPicker(t *testing.T) {
 		branches: []worktree.RemoteBranch{{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"}},
 	})
 	mm := updated.(Model)
-	if mm.remotePicker.loading {
-		t.Error("expected picker to leave loading after branches arrive")
-	}
 	if got := len(mm.remotePicker.list.Items()); got != 1 {
 		t.Errorf("items = %d, want 1", got)
 	}

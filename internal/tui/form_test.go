@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/xico42/codeherd/internal/config"
@@ -324,4 +325,21 @@ func toListItems(items []Item) []list.Item {
 		result[i] = item
 	}
 	return result
+}
+
+func TestUpdateForm_nonCompletedDoesNotSetBusy(t *testing.T) {
+	ctx := formContext{project: "api", baseBranch: "develop"}
+	cfg := &config.Config{
+		Projects: map[string]config.ProjectConfig{"api": {}},
+		Agents:   map[string]config.AgentConfig{"claude": {Cmd: "claude"}},
+	}
+	m := Model{screen: screenForm, spinner: spinner.New(), cfg: cfg}
+	m.form = newFormModel(ctx, cfg, nil)
+	m.form.Init()
+
+	updated, _ := m.updateForm(tea.KeyPressMsg(tea.Key{Code: 'a', Text: "a"}))
+
+	if updated.(Model).busy != "" {
+		t.Errorf("busy = %q, want empty for a non-completed form", updated.(Model).busy)
+	}
 }

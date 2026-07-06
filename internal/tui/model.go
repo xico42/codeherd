@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
@@ -79,6 +80,15 @@ type Model struct {
 	// Status message for async operations.
 	statusMsg string
 
+	// busy is a non-empty label while a blocking git operation is in
+	// flight. When set, View renders a centered spinner + label,
+	// overriding m.screen (which is left unchanged). Cleared by the
+	// operation's result message.
+	busy string
+
+	// spinner animates the busy screen. It only ticks while busy != "".
+	spinner spinner.Model
+
 	// Form sub-model.
 	form *formModel
 
@@ -117,12 +127,14 @@ func NewModel(
 	keys := defaultKeyMap()
 	l := newList(nil)
 	h := help.New()
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
 	m := Model{
 		screen:       screenList,
 		list:         l,
 		keys:         keys,
 		help:         h,
+		spinner:      sp,
 		cfg:          cfg,
 		wtSvc:        wtSvc,
 		sesSvc:       sesSvc,
@@ -149,6 +161,14 @@ func (m Model) syncProfileKeyEnabled() Model {
 	return m
 }
 
+// enterBusy sets the busy label and batches the given command with a spinner
+// tick, so the spinner animates while cmd runs. m.screen is left unchanged;
+// View short-circuits to the busy screen while busy != "".
+func (m Model) enterBusy(label string, cmd tea.Cmd) (Model, tea.Cmd) {
+	m.busy = label
+	return m, tea.Batch(cmd, m.spinner.Tick)
+}
+
 func newList(items []list.Item) list.Model {
 	if items == nil {
 		items = []list.Item{}
@@ -171,6 +191,17 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// While a blocking operation is in flight, swallow all input except
+	// quit. The screen underneath is hidden by the busy view, and the git
+	// operation cannot be cancelled mid-flight, so other keys must not
+	// mutate state that the pending result message will rely on.
+	if kp, ok := msg.(tea.KeyPressMsg); ok && m.busy != "" {
+		if key.Matches(kp, m.keys.Quit) {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -185,6 +216,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		return m, tea.Batch(m.refreshCmd(), tickCmd())
+
+	case spinner.TickMsg:
+		// Only advance (and thus re-schedule) while busy, so the tick
+		// loop stops cleanly once the operation completes.
+		if m.busy == "" {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 
 	case itemsMsg:
 		items := make([]list.Item, len(msg))
@@ -216,6 +257,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case errMsg:
+		m.busy = ""
 		if msg.err != nil {
 			m.statusMsg = msg.err.Error()
 		}
@@ -229,10 +271,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case cloneDoneMsg:
+		m.busy = ""
 		m.statusMsg = fmt.Sprintf("Cloned %s", msg.project)
 		return m, m.refreshCmd()
 
 	case worktreeCreatedMsg:
+		m.busy = ""
 		m.statusMsg = fmt.Sprintf("Created %s/%s", msg.project, msg.branch)
 		m.screen = screenList
 		m.form = nil
@@ -242,10 +286,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refreshCmd()
 
 	case remoteBranchesMsg:
+		m.busy = ""
 		if m.remotePicker != nil && m.remotePicker.project == msg.project {
 			if msg.err != nil {
 				m.remotePicker.errText = msg.err.Error()
-				m.remotePicker.loading = false
 			} else {
 				m.remotePicker.setBranches(msg.branches)
 			}
@@ -287,7 +331,15 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.shellAction()
 
 		case key.Matches(msg, m.keys.Clone):
-			return m, m.cloneAction()
+			cmd := m.cloneAction()
+			if cmd == nil {
+				return m, nil
+			}
+			// cloneAction returned non-nil ⇒ selection is a valid
+			// uncloned project, so selectedItem() is non-nil.
+			sel := m.selectedItem()
+			m, cmd = m.enterBusy(fmt.Sprintf("Cloning %s…", sel.Project), cmd)
+			return m, cmd
 
 		case key.Matches(msg, m.keys.New):
 			return m.showForm()
@@ -316,6 +368,17 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() tea.View {
+	if m.busy != "" {
+		body := lipgloss.Place(
+			m.width, m.height,
+			lipgloss.Center, lipgloss.Center,
+			m.spinner.View()+" "+m.busy,
+		)
+		v := tea.NewView(body)
+		v.AltScreen = true
+		return v
+	}
+
 	var content string
 	switch m.screen {
 	case screenForm:
@@ -582,7 +645,8 @@ func (m Model) startRemotePicker() (tea.Model, tea.Cmd) {
 	}
 	m.remotePicker = newRemotePicker(sel.Project, m.cfg, m.tmuxClient)
 	m.screen = screenRemotePicker
-	return m, m.fetchRemoteBranchesCmd(sel.Project)
+	m, cmd := m.enterBusy("Fetching remote branches…", m.fetchRemoteBranchesCmd(sel.Project))
+	return m, cmd
 }
 
 // fetchRemoteBranchesCmd fetches all remotes (best-effort) and lists the

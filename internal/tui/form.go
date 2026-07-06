@@ -210,7 +210,10 @@ func (m Model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.form, cmd = m.form.Update(msg)
 
 	if m.form.completed() {
-		return m, m.form.submit()
+		// Reassign m (do not shadow it with :=) so the linter stays quiet.
+		var submitCmd tea.Cmd
+		m, submitCmd = m.enterBusy("Creating worktree…", m.form.submit())
+		return m, submitCmd
 	}
 
 	return m, cmd

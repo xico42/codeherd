@@ -157,6 +157,177 @@ func TestRunAgentCmd_cmdWithSpaces_parsesCorrectly(t *testing.T) {
 	}
 }
 
+func TestRunAgentCmd_passThroughArgs_appendedAfterAgentArgs(t *testing.T) {
+	setTestConfig(t, &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"my-agent": {Cmd: "mybin", Args: []string{"--flag", "val"}},
+		},
+	})
+
+	var execArgs []string
+	origLookPath := lookPath
+	t.Cleanup(func() { lookPath = origLookPath })
+	lookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+
+	origExec := syscallExec
+	t.Cleanup(func() { syscallExec = origExec })
+	syscallExec = func(_ string, args []string, _ []string) error {
+		execArgs = args
+		return nil
+	}
+
+	c := &RunAgentCmd{}
+	cobraCmd := c.Cobra()
+	cobraCmd.SetOut(io.Discard)
+	cobraCmd.SetErr(io.Discard)
+	cobraCmd.SetArgs([]string{"my-agent", "--", "--model", "opus"})
+
+	if err := cobraCmd.Execute(); err != nil {
+		t.Fatalf("Execute() = %v, want nil", err)
+	}
+	wantArgs := []string{"mybin", "--flag", "val", "--model", "opus"}
+	if !slices.Equal(execArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", execArgs, wantArgs)
+	}
+}
+
+func TestRunAgentCmd_passThroughArgs_landAfterEmbeddedDash(t *testing.T) {
+	setTestConfig(t, &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"my-agent": {Cmd: "ai-jail -- claude", Args: []string{"--project", "foo"}},
+		},
+	})
+
+	var execArgs []string
+	origLookPath := lookPath
+	t.Cleanup(func() { lookPath = origLookPath })
+	lookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+
+	origExec := syscallExec
+	t.Cleanup(func() { syscallExec = origExec })
+	syscallExec = func(_ string, args []string, _ []string) error {
+		execArgs = args
+		return nil
+	}
+
+	c := &RunAgentCmd{}
+	cobraCmd := c.Cobra()
+	cobraCmd.SetOut(io.Discard)
+	cobraCmd.SetErr(io.Discard)
+	cobraCmd.SetArgs([]string{"my-agent", "--", "-p", "trust"})
+
+	if err := cobraCmd.Execute(); err != nil {
+		t.Fatalf("Execute() = %v, want nil", err)
+	}
+	wantArgs := []string{"ai-jail", "--", "claude", "--project", "foo", "-p", "trust"}
+	if !slices.Equal(execArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", execArgs, wantArgs)
+	}
+}
+
+func TestRunAgentCmd_emptyPassThrough_unchanged(t *testing.T) {
+	setTestConfig(t, &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"my-agent": {Cmd: "mybin", Args: []string{"--flag", "val"}},
+		},
+	})
+
+	var execArgs []string
+	origLookPath := lookPath
+	t.Cleanup(func() { lookPath = origLookPath })
+	lookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+
+	origExec := syscallExec
+	t.Cleanup(func() { syscallExec = origExec })
+	syscallExec = func(_ string, args []string, _ []string) error {
+		execArgs = args
+		return nil
+	}
+
+	c := &RunAgentCmd{}
+	cobraCmd := c.Cobra()
+	cobraCmd.SetOut(io.Discard)
+	cobraCmd.SetErr(io.Discard)
+	cobraCmd.SetArgs([]string{"my-agent", "--"})
+
+	if err := cobraCmd.Execute(); err != nil {
+		t.Fatalf("Execute() = %v, want nil", err)
+	}
+	wantArgs := []string{"mybin", "--flag", "val"}
+	if !slices.Equal(execArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", execArgs, wantArgs)
+	}
+}
+
+func TestRunAgentCmd_rejectsBarePositionalWithoutDash(t *testing.T) {
+	setTestConfig(t, &config.Config{
+		Agents: map[string]config.AgentConfig{"my-agent": {Cmd: "mybin"}},
+	})
+
+	origExec := syscallExec
+	t.Cleanup(func() { syscallExec = origExec })
+	syscallExec = func(string, []string, []string) error {
+		t.Fatal("syscallExec should not be called when validation fails")
+		return nil
+	}
+
+	c := &RunAgentCmd{}
+	cobraCmd := c.Cobra()
+	cobraCmd.SetOut(io.Discard)
+	cobraCmd.SetErr(io.Discard)
+	cobraCmd.SetArgs([]string{"my-agent", "foo"})
+
+	if err := cobraCmd.Execute(); err == nil {
+		t.Fatal("expected error for a second bare positional without --")
+	}
+}
+
+func TestRunAgentCmd_rejectsZeroArgs(t *testing.T) {
+	setTestConfig(t, &config.Config{
+		Agents: map[string]config.AgentConfig{"my-agent": {Cmd: "mybin"}},
+	})
+
+	origExec := syscallExec
+	t.Cleanup(func() { syscallExec = origExec })
+	syscallExec = func(string, []string, []string) error {
+		t.Fatal("syscallExec should not be called when validation fails")
+		return nil
+	}
+
+	c := &RunAgentCmd{}
+	cobraCmd := c.Cobra()
+	cobraCmd.SetOut(io.Discard)
+	cobraCmd.SetErr(io.Discard)
+	cobraCmd.SetArgs([]string{})
+
+	if err := cobraCmd.Execute(); err == nil {
+		t.Fatal("expected error when no agent name is given")
+	}
+}
+
+func TestRunAgentCmd_rejectsTwoPositionalsBeforeDash(t *testing.T) {
+	setTestConfig(t, &config.Config{
+		Agents: map[string]config.AgentConfig{"my-agent": {Cmd: "mybin"}},
+	})
+
+	origExec := syscallExec
+	t.Cleanup(func() { syscallExec = origExec })
+	syscallExec = func(string, []string, []string) error {
+		t.Fatal("syscallExec should not be called when validation fails")
+		return nil
+	}
+
+	c := &RunAgentCmd{}
+	cobraCmd := c.Cobra()
+	cobraCmd.SetOut(io.Discard)
+	cobraCmd.SetErr(io.Discard)
+	cobraCmd.SetArgs([]string{"my-agent", "extra", "--", "x"})
+
+	if err := cobraCmd.Execute(); err == nil {
+		t.Fatal("expected error for two positionals before --")
+	}
+}
+
 func TestRunAgentCmd_execError_returnsWrappedError(t *testing.T) {
 	setTestConfig(t, &config.Config{
 		Agents: map[string]config.AgentConfig{

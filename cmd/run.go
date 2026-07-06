@@ -15,11 +15,23 @@ type RunAgentCmd struct{}
 
 func (c *RunAgentCmd) Cobra() *cobra.Command {
 	return &cobra.Command{
-		Use:   "run <agent>",
+		Use:   "run <agent> [-- <args>]",
 		Short: "Run a registered agent in the current shell",
-		Long:  "Resolves a registered agent from config and replaces the current process with it. The agent inherits the current environment with its configured env vars overlaid.",
-		Args:  cobra.ExactArgs(1),
-		RunE:  c.Run,
+		Long: "Resolves a registered agent from config and replaces the current process with it. " +
+			"The agent inherits the current environment with its configured env vars overlaid.\n\n" +
+			"Arguments after -- are forwarded to the agent command verbatim, appended after the " +
+			"agent's configured args. Example: ch run claude -- --model opus",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if dash := cmd.ArgsLenAtDash(); dash == -1 {
+				if len(args) != 1 {
+					return fmt.Errorf("accepts exactly one agent name; pass extra args after --")
+				}
+			} else if dash != 1 {
+				return fmt.Errorf("accepts exactly one agent name before --; pass extra args after --")
+			}
+			return nil
+		},
+		RunE: c.Run,
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
 				return nil, cobra.ShellCompDirectiveNoFileComp
@@ -56,6 +68,7 @@ func (c *RunAgentCmd) Run(cmd *cobra.Command, args []string) error {
 
 	execArgs := append([]string{binaryName}, cmdPrefixArgs...)
 	execArgs = append(execArgs, agent.Args...)
+	execArgs = append(execArgs, args[1:]...)
 	mergedEnv := mergeEnv(os.Environ(), agent.Env)
 
 	if err := syscallExec(binary, execArgs, mergedEnv); err != nil {

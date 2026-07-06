@@ -93,6 +93,8 @@ Each project points to a git repository and a default branch. Clone paths mirror
 
 Agents are CLI tools configured once and selected at session start. Any command-line tool works -- Claude Code, Aider, Codex, or a custom script. Each agent defines a command, optional arguments, and optional environment variables.
 
+Run an agent in the current shell with `ch run <agent>`. Arguments after `--` are forwarded to the agent's command verbatim, appended after its configured args -- for example `ch run claude -- --model opus`.
+
 ### Profiles
 
 Profiles let one machine carry several independent codeherd configs — e.g. a
@@ -350,6 +352,7 @@ ch
 | `ch attach session <project> <branch>` | Attach to a session |
 | `ch show session <project> <branch>` | Show session details |
 | `ch delete session <project> <branch>` | Stop a session |
+| `ch run <agent> [-- <args>]` | Run a registered agent in the current shell; args after `--` are forwarded to it |
 | `ch version` | Print the installed version |
 
 ## Development

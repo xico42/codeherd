@@ -322,20 +322,26 @@ func (m Model) confirmDeleteAll() (tea.Model, tea.Cmd) {
 	m.confirm = nil
 	m.screen = screenList
 
-	sesSvc := m.sesSvc
 	wtSvc := m.wtSvc
 	tmuxClient := m.tmuxClient
 	project := target.Project
 	branch := target.Branch
+	agentID := target.AgentSessionID
 	shellID := target.ShellSessionID
 
 	return m, func() tea.Msg {
-		if target.AgentSessionID != "" {
-			_ = sesSvc.Stop(project, branch, semconv.SessionTypeAgent)
-		}
-
-		if shellID != "" {
-			_ = tmuxClient.KillSession(shellID)
+		// Kill by tmux session ID, never by a rebuilt session name: the name
+		// depends on the active profile and on the identity branch, either of
+		// which can differ from what this item displays. A lookup miss here
+		// would leave the session — and the agent process under it — alive
+		// while the worktree is force-deleted out from under it.
+		for _, id := range []string{agentID, shellID} {
+			if id == "" {
+				continue
+			}
+			if err := tmuxClient.KillSession(id); err != nil {
+				return errMsg{err: fmt.Errorf("killing session %s: %w", id, err)}
+			}
 		}
 
 		err := wtSvc.Delete(worktree.DeleteRequest{

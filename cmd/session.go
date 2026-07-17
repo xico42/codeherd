@@ -6,33 +6,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/filecopy"
-	"github.com/xico42/codeherd/internal/herdtemplate"
-	"github.com/xico42/codeherd/internal/hooks"
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/semconv"
-	"github.com/xico42/codeherd/internal/session"
 	"github.com/xico42/codeherd/internal/tmux"
-	"github.com/xico42/codeherd/internal/worktree"
 )
-
-// resolveAgentName returns the agent name from the flag or config default.
-func resolveAgentName(flagValue string) (string, error) {
-	if flagValue != "" {
-		return flagValue, nil
-	}
-	if cfg.Defaults.Agent != "" {
-		return cfg.Defaults.Agent, nil
-	}
-	return "", fmt.Errorf("no agent specified; use --agent or set defaults.agent in config")
-}
 
 // execTmuxAttach attaches to a tmux session. If already inside tmux, uses
 // switch-client. Otherwise, replaces the process with tmux attach-session.
@@ -74,15 +57,14 @@ func (c *ListSessionCmd) Cobra() *cobra.Command {
 }
 
 func (c *ListSessionCmd) Run(cmd *cobra.Command, _ []string) error {
-	svc := newSessionService()
-	sessions, err := listSessionsForProfile(svc)
+	sessions, err := h.Sessions()
 	if err != nil {
-		return err
+		return fmt.Errorf("listing sessions: %w", err)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "SESSION\tTYPE\tSTATUS")
 	for _, s := range sessions {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, s.Type, s.Status)
+		fmt.Fprintf(w, "%s\t%s\t%s\n", s.Ref.CanonicalName(), s.Type, s.Status)
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
@@ -111,14 +93,12 @@ func (c *ShowSessionCmd) Cobra() *cobra.Command {
 
 func (c *ShowSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	project, branch := args[0], args[1]
-	sessionType := sessionTypeFromFlag(c.Shell)
-	svc := newSessionService()
-	info, err := showSessionForProfile(svc, project, branch, sessionType)
+	info, err := h.Resolve(h.Ref(project, branch), sessionTypeFromFlag(c.Shell))
 	if err != nil {
-		return sessionErr(cmd, err)
+		return herdErr(project, branch, err)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "Session:\t%s\n", info.Name)
+	fmt.Fprintf(w, "Session:\t%s\n", info.Ref.CanonicalName())
 	fmt.Fprintf(w, "Type:\t%s\n", info.Type)
 	fmt.Fprintf(w, "Status:\t%s\n", info.Status)
 	if info.Annotation != "" {
@@ -162,113 +142,38 @@ func (c *CreateSessionCmd) Run(cmd *cobra.Command, args []string) error {
 
 	sessionType := sessionTypeFromFlag(c.Shell)
 
-	var sessionCmd string
-	var sessionEnv map[string]string
+	flagAgent := ""
+	if cmd.Flags().Changed("agent") {
+		flagAgent = c.Agent
+	}
 
-	if c.Shell {
-		sessionCmd = os.Getenv("SHELL")
-		if sessionCmd == "" {
-			sessionCmd = "/bin/sh"
+	ref := h.Ref(project, branch)
+	// Ensure the worktree exists, tolerating the common case where it already
+	// does. One call replaces the old probe-then-create dance.
+	if _, err := h.EnsureWorkspace(ref, herd.EnsureOpts{Provision: true}); err != nil {
+		if !errors.Is(err, herd.ErrWorktreeExists) {
+			return herdErr(project, branch, err)
 		}
-		sessionEnv = nil
+		// Already there — that is the common case for `create session`.
 	} else {
-		flagAgent := ""
-		if cmd.Flags().Changed("agent") {
-			flagAgent = c.Agent
-		}
-		agentName, err := resolveAgentName(flagAgent)
-		if err != nil {
-			return err
-		}
-		agent, err := cfg.AgentByName(agentName)
-		if err != nil {
-			return fmt.Errorf("resolving agent: %w", err)
-		}
-		sessionCmd = agent.Command()
-		sessionEnv = agent.Env
+		fmt.Fprintf(cmd.OutOrStdout(), "Worktree %s/%s not found, creating...  done\n", project, branch)
 	}
 
-	projCfg := cfg.Projects[project]
-	h := hooks.New(projCfg.Hooks)
-
-	wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), h)
-	path, err := wtSvc.WorktreePath(project, branch)
-	if err != nil {
-		if errors.Is(err, worktree.ErrWorktreeNotFound) {
-			fmt.Fprintf(cmd.OutOrStdout(), "Worktree %s/%s not found, creating...  ", project, branch)
-			result, createErr := wtSvc.New(project, branch)
-			if createErr != nil {
-				fmt.Fprintln(cmd.OutOrStdout())
-				return worktreeErr(cmd, project, branch, createErr)
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), "done")
-			path = result.Path
-
-			// File copy
-			if len(projCfg.Files) > 0 {
-				repoPath, _ := config.RepoPath(projCfg.Repo)
-				cloneDir := filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
-				copySvc := filecopy.New(h)
-				attrs := map[string]string{
-					semconv.HookAttrProject:      project,
-					semconv.HookAttrBranch:       branch,
-					semconv.HookAttrWorktreePath: result.Path,
-				}
-				if err := copySvc.Copy(projCfg.Files, cloneDir, result.Path, attrs); err != nil {
-					return fmt.Errorf("copying files: %w", err)
-				}
-			}
-
-			// Template processing
-			tmplSvc := herdtemplate.New(h)
-			tmplAttrs := map[string]string{
-				semconv.HookAttrProject:      project,
-				semconv.HookAttrBranch:       branch,
-				semconv.HookAttrWorktreePath: result.Path,
-			}
-			if _, err := tmplSvc.Process(herdtemplate.ProcessContext{
-				Project:      project,
-				Branch:       branch,
-				WorktreePath: result.Path,
-				SessionName:  semconv.SessionName(activeProfile(), project, branch),
-			}, tmplAttrs); err != nil {
-				return fmt.Errorf("processing templates: %w", err)
-			}
-		} else {
-			return sessionErr(cmd, err)
-		}
-	}
-
-	profile := activeProfile()
-	name := semconv.SessionName(profile, project, branch)
-	if sessionType == semconv.SessionTypeShell {
-		name = semconv.ShellSessionName(profile, project, branch)
+	name := ref.CanonicalName()
+	if sessionType == herd.SessionTypeShell {
+		name = semconv.ShellSessionName(ref.Profile, project, branch)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
 
-	var cloneDir string
-	if repoPath, rpErr := config.RepoPath(projCfg.Repo); rpErr == nil {
-		cloneDir = filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
-	}
-
-	tc := tmux.NewClient(tmux.NewRealRunner())
-	svc := session.NewService(tc, h)
-	sessionID, err := svc.Start(session.StartRequest{
-		Project:  project,
-		Branch:   branch,
-		Path:     path,
-		CloneDir: cloneDir,
-		Type:     sessionType,
-		Cmd:      sessionCmd,
-		Env:      sessionEnv,
-		Profile:  profile,
-		Attach:   c.Attach,
+	handle, err := h.Launch(ref, herd.LaunchOpts{
+		Type:   sessionType,
+		Agent:  flagAgent, // "" means defaults.agent — resolved inside Launch
+		Attach: c.Attach,
 	})
 	if err != nil {
 		fmt.Fprintln(cmd.OutOrStdout())
-		return sessionErr(cmd, err)
+		return herdErr(project, branch, err)
 	}
-
 	fmt.Fprintln(cmd.OutOrStdout(), "done")
 	if !c.Attach {
 		shellSuffix := ""
@@ -276,12 +181,9 @@ func (c *CreateSessionCmd) Run(cmd *cobra.Command, args []string) error {
 			shellSuffix = " --shell"
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Attach with: ch attach session %s %s%s\n", project, branch, shellSuffix)
+		return nil
 	}
-
-	if c.Attach {
-		return execTmuxAttach(sessionID)
-	}
-	return nil
+	return execTmuxAttach(handle.ID)
 }
 
 // ── delete ───────────────────────────────────────────────────────────────────
@@ -308,14 +210,13 @@ func (c *DeleteSessionCmd) Cobra() *cobra.Command {
 func (c *DeleteSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	project, branch := args[0], args[1]
 	sessionType := sessionTypeFromFlag(c.Shell)
-	svc := newSessionService()
 
 	if !c.Force {
-		info, err := showSessionForProfile(svc, project, branch, sessionType)
+		info, err := h.Resolve(h.Ref(project, branch), sessionType)
 		if err != nil {
-			return sessionErr(cmd, err)
+			return herdErr(project, branch, err)
 		}
-		if info.Status == semconv.StatusRunning {
+		if info.Status == herd.StatusRunning {
 			fmt.Fprintf(cmd.OutOrStdout(), "Delete session %s/%s (%s)? [y/N] ", project, branch, sessionType)
 			scanner := bufio.NewScanner(cmd.InOrStdin())
 			scanner.Scan()
@@ -327,9 +228,9 @@ func (c *DeleteSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Stopping %s/%s...  ", project, branch)
-	if err := stopSessionForProfile(svc, project, branch, sessionType); err != nil {
+	if _, err := h.StopSessions(h.Ref(project, branch), herd.StopOpts{Type: sessionType}); err != nil {
 		fmt.Fprintln(cmd.OutOrStdout())
-		return sessionErr(cmd, err)
+		return herdErr(project, branch, err)
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "done")
 	return nil
@@ -356,21 +257,19 @@ func (c *AttachSessionCmd) Cobra() *cobra.Command {
 
 func (c *AttachSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	project, branch := args[0], args[1]
-	sessionType := sessionTypeFromFlag(c.Shell)
-	svc := newSessionService()
-	info, err := showSessionForProfile(svc, project, branch, sessionType)
+	info, err := h.Resolve(h.Ref(project, branch), sessionTypeFromFlag(c.Shell))
 	if err != nil {
-		return sessionErr(cmd, err)
+		return herdErr(project, branch, err)
 	}
-	return execTmuxAttach(info.SessionID)
+	return execTmuxAttach(info.ID)
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-// sessionTypeFromFlag maps the --shell flag to a session type constant.
-func sessionTypeFromFlag(shell bool) string {
+// sessionTypeFromFlag maps the --shell flag to a herd session type.
+func sessionTypeFromFlag(shell bool) herd.SessionType {
 	if shell {
-		return semconv.SessionTypeShell
+		return herd.SessionTypeShell
 	}
-	return semconv.SessionTypeAgent
+	return herd.SessionTypeAgent
 }

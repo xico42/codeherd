@@ -92,11 +92,12 @@ func TestCreateSession_unconfiguredProject(t *testing.T) {
 	}
 }
 
-func TestCreateSession_noAgentConfigured_errors(t *testing.T) {
+func TestCreateSession_worktreeCreationFails_returnsError(t *testing.T) {
 	cfgDir := t.TempDir()
+	projectsDir := t.TempDir()
 	cfgPath := filepath.Join(cfgDir, "config.toml")
 	content := `[defaults]
-projects_dir = "` + t.TempDir() + `"
+projects_dir = "` + projectsDir + `"
 
 [projects.myapp]
 repo = "git@github.com:user/myapp.git"
@@ -104,12 +105,18 @@ repo = "git@github.com:user/myapp.git"
 	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Create the clone dir so EnsureWorkspace gets past the not-cloned check
+	// (which now goes through worktreeErr's os.Exit, like create worktree).
+	// The clone dir is not a real git repo, so worktree creation fails with a
+	// non-sentinel error that flows through worktreeErr's default branch and is
+	// returned (no os.Exit) — the returnable path this test can observe.
+	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
+	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	err := runCmd(t, "--config", cfgPath, "create", "session", "myapp", "main")
 	if err == nil {
-		t.Fatal("expected error when no agent configured")
-	}
-	if !strings.Contains(err.Error(), "no agent specified") {
-		t.Errorf("error = %q, want to contain 'no agent specified'", err.Error())
+		t.Fatal("expected error for an uncreatable session")
 	}
 }
 

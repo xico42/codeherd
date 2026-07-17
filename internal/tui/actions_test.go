@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,9 +11,27 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/hooks"
+	"github.com/xico42/codeherd/internal/herd"
+	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/tmux"
 )
+
+// tuiHerd builds a Herd for the action tests, wired to runner, with one
+// configured project "myapp" whose worktree for branch exists on disk (Launch
+// stats the path it derives from the Ref).
+func tuiHerd(t *testing.T, runner tmux.Runner, branch string) (*herd.Herd, *config.Config) {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: dir},
+		Projects: map[string]config.ProjectConfig{"myapp": {Repo: "git@github.com:user/myapp.git"}},
+	}
+	wt := filepath.Join(dir, "github.com", "user", "myapp__worktrees", semconv.FlattenBranch(branch))
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return herd.New(cfg, nil, herd.Deps{Tmux: runner}), cfg
+}
 
 func TestStartDelete_noSelection(t *testing.T) {
 	m := Model{screen: screenList}
@@ -494,7 +514,7 @@ func TestAttachAction_projectGroup_singleAgent_skipsPickerAndReturnsCmd(t *testi
 	for i, it := range items {
 		listItems[i] = it
 	}
-	m := Model{screen: screenList, cfg: cfg}
+	m := Model{screen: screenList, cfg: cfg, herd: herd.New(cfg, nil, herd.Deps{})}
 	m.list = newList(listItems)
 
 	updated, cmd := m.attachAction()
@@ -519,7 +539,7 @@ func TestAttachAction_projectGroup_multipleAgents_showsPicker(t *testing.T) {
 	for i, it := range items {
 		listItems[i] = it
 	}
-	m := Model{screen: screenList, cfg: cfg}
+	m := Model{screen: screenList, cfg: cfg, herd: herd.New(cfg, nil, herd.Deps{})}
 	m.list = newList(listItems)
 
 	updated, _ := m.attachAction()
@@ -547,7 +567,7 @@ func TestAttachAction_projectGroup_defaultBranch(t *testing.T) {
 	for i, it := range items {
 		listItems[i] = it
 	}
-	m := Model{screen: screenList, cfg: cfg}
+	m := Model{screen: screenList, cfg: cfg, herd: herd.New(cfg, nil, herd.Deps{})}
 	m.list = newList(listItems)
 
 	updated, _ := m.attachAction()
@@ -555,8 +575,8 @@ func TestAttachAction_projectGroup_defaultBranch(t *testing.T) {
 	if um.agentPicker == nil {
 		t.Fatal("agentPicker should be set")
 	}
-	if um.agentPicker.pending.branch != "develop" {
-		t.Errorf("picker.pending.branch = %q, want develop", um.agentPicker.pending.branch)
+	if um.agentPicker.pending.ref.Branch != "develop" {
+		t.Errorf("picker.pending.ref.Branch = %q, want develop", um.agentPicker.pending.ref.Branch)
 	}
 }
 
@@ -891,15 +911,15 @@ func TestShellAction_worktreeItem_sessionCreated(t *testing.T) {
 		},
 	}
 	client := tmux.NewClient(runner)
+	hrd, cfg := tuiHerd(t, runner, "feat")
 
 	path := t.TempDir()
-	items := []Item{{Project: "myapp", Branch: "feat", Path: path, Group: groupWorktree}}
+	items := []Item{{Ref: hrd.Ref("myapp", "feat"), Project: "myapp", Branch: "feat", Path: path, Group: groupWorktree}}
 	listItems := make([]list.Item, len(items))
 	for i, it := range items {
 		listItems[i] = it
 	}
-	cfg := &config.Config{}
-	m := Model{screen: screenList, tmuxClient: client, cfg: cfg}
+	m := Model{screen: screenList, tmuxClient: client, cfg: cfg, herd: hrd}
 	m.list = newList(listItems)
 
 	cmd := m.shellAction()
@@ -911,7 +931,7 @@ func TestShellAction_worktreeItem_sessionCreated(t *testing.T) {
 	if !ok {
 		t.Fatalf("cmd() returned %T, want attachMsg", msg)
 	}
-	// attachMsg.session is now the stable session ID from SessionID(), not the tmux name.
+	// attachMsg.session is now the stable session ID from Launch's Handle.
 	if am.session != "$99" {
 		t.Errorf("session = %q, want $99", am.session)
 	}
@@ -923,15 +943,15 @@ func TestShellAction_newSessionExecError(t *testing.T) {
 	// errOnCallRunner: call 0 = list-sessions (succeeds, empty), call 1 = new-session (exec error).
 	errRunner := &errOnCallRunner{errOnCall: 1}
 	client := tmux.NewClient(errRunner)
+	hrd, cfg := tuiHerd(t, errRunner, "feat")
 
 	path := t.TempDir()
-	items := []Item{{Project: "myapp", Branch: "feat", Path: path, Group: groupWorktree}}
+	items := []Item{{Ref: hrd.Ref("myapp", "feat"), Project: "myapp", Branch: "feat", Path: path, Group: groupWorktree}}
 	listItems := make([]list.Item, len(items))
 	for i, it := range items {
 		listItems[i] = it
 	}
-	cfg := &config.Config{}
-	m := Model{screen: screenList, tmuxClient: client, cfg: cfg}
+	m := Model{screen: screenList, tmuxClient: client, cfg: cfg, herd: hrd}
 	m.list = newList(listItems)
 
 	cmd := m.shellAction()
@@ -954,15 +974,15 @@ func TestShellAction_newSessionError(t *testing.T) {
 		},
 	}
 	client := tmux.NewClient(runner)
+	hrd, cfg := tuiHerd(t, runner, "feat")
 
 	path := t.TempDir()
-	items := []Item{{Project: "myapp", Branch: "feat", Path: path, Group: groupWorktree}}
+	items := []Item{{Ref: hrd.Ref("myapp", "feat"), Project: "myapp", Branch: "feat", Path: path, Group: groupWorktree}}
 	listItems := make([]list.Item, len(items))
 	for i, it := range items {
 		listItems[i] = it
 	}
-	cfg := &config.Config{}
-	m := Model{screen: screenList, tmuxClient: client, cfg: cfg}
+	m := Model{screen: screenList, tmuxClient: client, cfg: cfg, herd: hrd}
 	m.list = newList(listItems)
 
 	cmd := m.shellAction()
@@ -993,14 +1013,14 @@ func (r *errOnCallRunner) Run(args ...string) (string, string, int, error) {
 // ── startSessionAfterCreate tests ─────────────────────────────────────────────
 
 func TestStartSessionAfterCreate_agentNotFound(t *testing.T) {
-	cfg := &config.Config{} // no agents
-	m := Model{cfg: cfg}
+	// no agents configured; Launch's agent resolution must fail with errMsg.
+	hrd, cfg := tuiHerd(t, &mockTmuxRunner{}, "feat")
+	m := Model{cfg: cfg, herd: hrd}
 
 	cmd := m.startSessionAfterCreate(worktreeCreatedMsg{
-		project: "myapp",
-		branch:  "feat",
-		path:    "/tmp/wt",
-		agent:   "nonexistent",
+		ref:   hrd.Ref("myapp", "feat"),
+		path:  t.TempDir(),
+		agent: "nonexistent",
 	})
 	if cmd == nil {
 		t.Fatal("startSessionAfterCreate should return non-nil cmd")
@@ -1008,37 +1028,6 @@ func TestStartSessionAfterCreate_agentNotFound(t *testing.T) {
 	msg := cmd()
 	if _, ok := msg.(errMsg); !ok {
 		t.Errorf("cmd() returned %T, want errMsg for missing agent", msg)
-	}
-}
-
-// ── runFileCopyAndTemplate tests ──────────────────────────────────────────────
-
-func TestRunFileCopyAndTemplate_noFiles_noTemplates(t *testing.T) {
-	cfg := &config.Config{}
-	projCfg := config.ProjectConfig{}
-	h := &hooks.NoOp{}
-
-	// With no files and a non-existent worktree path, template processing
-	// should succeed (no .herd files to find).
-	err := runFileCopyAndTemplate(cfg, projCfg, h, "myapp", "feat", t.TempDir())
-	if err != nil {
-		t.Errorf("runFileCopyAndTemplate() = %v, want nil", err)
-	}
-}
-
-func TestRunFileCopyAndTemplate_withFiles_sourceNotFound(t *testing.T) {
-	cfg := &config.Config{
-		Defaults: config.DefaultsConfig{ProjectsDir: t.TempDir()},
-	}
-	projCfg := config.ProjectConfig{
-		Repo:  "git@github.com:user/myapp.git",
-		Files: []string{"nonexistent.txt"},
-	}
-	h := &hooks.NoOp{}
-
-	err := runFileCopyAndTemplate(cfg, projCfg, h, "myapp", "feat", t.TempDir())
-	if err == nil {
-		t.Error("runFileCopyAndTemplate() with missing source file should return error")
 	}
 }
 
@@ -1074,16 +1063,15 @@ func TestModel_Update_worktreeCreatedMsg_withAttachAndAgent(t *testing.T) {
 			"claude": {Cmd: "claude"},
 		},
 	}
-	m := Model{screen: screenForm, cfg: cfg}
+	m := Model{screen: screenForm, cfg: cfg, herd: herd.New(cfg, nil, herd.Deps{})}
 	m.list = newList(nil)
 	m.form = newFormModel(formContext{project: "myapp", baseBranch: "main"}, cfg, nil)
 
 	updated, cmd := m.Update(worktreeCreatedMsg{
-		project: "myapp",
-		branch:  "feat",
-		path:    "/tmp/wt",
-		attach:  true,
-		agent:   "claude",
+		ref:    herd.Ref{Project: "myapp", Branch: "feat"},
+		path:   "/tmp/wt",
+		attach: true,
+		agent:  "claude",
 	})
 	um := updated.(Model)
 	if um.screen != screenList {

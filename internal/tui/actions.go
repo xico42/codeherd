@@ -1,21 +1,20 @@
 package tui
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
+	"errors"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/filecopy"
-	"github.com/xico42/codeherd/internal/herdtemplate"
-	"github.com/xico42/codeherd/internal/hooks"
-	projectpkg "github.com/xico42/codeherd/internal/project"
-	"github.com/xico42/codeherd/internal/semconv"
-	"github.com/xico42/codeherd/internal/session"
-	"github.com/xico42/codeherd/internal/worktree"
+	"github.com/xico42/codeherd/internal/herd"
 )
+
+// defaultBranch returns a project's configured default branch, or "main".
+func (m Model) defaultBranch(project string) string {
+	if p, ok := m.cfg.Projects[project]; ok && p.DefaultBranch != "" {
+		return p.DefaultBranch
+	}
+	return "main"
+}
 
 // ── Attach (agent) ──────────────────────────────────────────────────────────
 
@@ -26,9 +25,7 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 	}
 
 	cfg := m.cfg
-	project := sel.Project
-	branch := sel.Branch
-	profile := m.activeProfile()
+	hrd := m.herd
 
 	switch sel.Group {
 	case groupAgent:
@@ -43,45 +40,23 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		path := sel.Path
-		projCfg := cfg.Projects[project]
-		tmuxClient := m.tmuxClient
-
-		pending := &agentPickerPending{
-			project:    project,
-			branch:     branch,
-			path:       path,
-			projCfg:    projCfg,
-			cfg:        cfg,
-			tmuxClient: tmuxClient,
-			profile:    profile,
-		}
+		ref := sel.Ref // identity from herd.List — never a rebuilt display branch
 
 		if len(agents) == 1 {
-			// Single agent — skip picker.
-			agent, _ := cfg.AgentByName(agents[0])
-			agentCmd := agent.Command()
+			// Single agent — skip picker. The worktree already exists, so no
+			// EnsureWorkspace is needed; go straight to the session.
+			agentName := agents[0]
 			return m, func() tea.Msg {
-				h := hooks.New(projCfg.Hooks)
-				sesSvc := session.NewService(tmuxClient, h)
-				sessionID, err := sesSvc.Start(session.StartRequest{
-					Project:  project,
-					Branch:   branch,
-					Path:     path,
-					CloneDir: projectCloneDir(cfg, projCfg),
-					Cmd:      agentCmd,
-					Env:      agent.Env,
-					Profile:  profile,
-				})
+				handle, err := hrd.Launch(ref, herd.LaunchOpts{Agent: agentName})
 				if err != nil {
 					return errMsg{err: err}
 				}
-				return attachMsg{session: sessionID}
+				return attachMsg{session: handle.ID}
 			}
 		}
 
 		// Multiple agents — show picker.
-		m.agentPicker = newAgentPicker(cfg, cfg.Defaults.Agent, pending)
+		m.agentPicker = newAgentPicker(cfg, cfg.Defaults.Agent, &agentPickerPending{ref: ref, herd: hrd})
 		m.screen = screenAgentPicker
 		return m, nil
 
@@ -92,58 +67,25 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		defaultBranch := "main"
-		if p, ok := cfg.Projects[project]; ok && p.DefaultBranch != "" {
-			defaultBranch = p.DefaultBranch
-		}
-
-		projCfg := cfg.Projects[project]
-		tmuxClient := m.tmuxClient
+		// No workspace yet — mint a Ref from the default branch.
+		ref := hrd.Ref(sel.Project, m.defaultBranch(sel.Project))
 
 		if len(agents) == 1 {
-			agent, _ := cfg.AgentByName(agents[0])
-			agentCmd := agent.Command()
+			agentName := agents[0]
 			return m, func() tea.Msg {
-				h := hooks.New(projCfg.Hooks)
-				projSvc := projectpkg.NewService(cfg, projectpkg.NewRealGitRunner(), h)
-				_ = projSvc.Clone(project)
-
-				wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, h)
-				result, err := wtSvc.New(project, defaultBranch)
+				if _, err := hrd.EnsureWorkspace(ref, herd.EnsureOpts{AutoClone: true, Provision: true}); err != nil && !errors.Is(err, herd.ErrWorktreeExists) {
+					return errMsg{err: err}
+				}
+				handle, err := hrd.Launch(ref, herd.LaunchOpts{Agent: agentName})
 				if err != nil {
 					return errMsg{err: err}
 				}
-
-				if err := runFileCopyAndTemplate(cfg, projCfg, h, project, defaultBranch, result.Path); err != nil {
-					return errMsg{err: err}
-				}
-
-				sesSvc := session.NewService(tmuxClient, h)
-				sessionID, err := sesSvc.Start(session.StartRequest{
-					Project:  project,
-					Branch:   defaultBranch,
-					Path:     result.Path,
-					CloneDir: projectCloneDir(cfg, projCfg),
-					Cmd:      agentCmd,
-					Env:      agent.Env,
-					Profile:  profile,
-				})
-				if err != nil {
-					return errMsg{err: err}
-				}
-				return attachMsg{session: sessionID}
+				return attachMsg{session: handle.ID}
 			}
 		}
 
 		// Multiple agents — show picker.
-		m.agentPicker = newAgentPicker(cfg, cfg.Defaults.Agent, &agentPickerPending{
-			project:    project,
-			branch:     defaultBranch,
-			projCfg:    projCfg,
-			cfg:        cfg,
-			tmuxClient: tmuxClient,
-			profile:    profile,
-		})
+		m.agentPicker = newAgentPicker(cfg, cfg.Defaults.Agent, &agentPickerPending{ref: ref, herd: hrd})
 		m.screen = screenAgentPicker
 		return m, nil
 	}
@@ -179,71 +121,33 @@ func (m Model) shellAction() tea.Cmd {
 		return nil
 	}
 
-	tmuxClient := m.tmuxClient
-	cfg := m.cfg
-	project := sel.Project
-	branch := sel.Branch
-	path := sel.Path
+	hrd := m.herd
 	shellSessionID := sel.ShellSessionID
-	profile := m.activeProfile()
+
+	isProject := sel.Group == groupProject
+	ref := sel.Ref // identity for existing worktree/agent rows
+	if isProject {
+		// No workspace yet — mint a Ref from the default branch.
+		ref = hrd.Ref(sel.Project, m.defaultBranch(sel.Project))
+	}
 
 	return func() tea.Msg {
-		// For group 3 (project-only), clone + create worktree first.
-		if branch == "" {
-			defaultBranch := "main"
-			if p, ok := cfg.Projects[project]; ok && p.DefaultBranch != "" {
-				defaultBranch = p.DefaultBranch
-			}
-			branch = defaultBranch
-
-			projCfg := cfg.Projects[project]
-			h := hooks.New(projCfg.Hooks)
-
-			projSvc := projectpkg.NewService(cfg, projectpkg.NewRealGitRunner(), h)
-			_ = projSvc.Clone(project)
-
-			wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, h)
-			result, err := wtSvc.New(project, branch)
-			if err != nil {
-				return errMsg{err: err}
-			}
-			path = result.Path
-
-			if err := runFileCopyAndTemplate(cfg, projCfg, h, project, branch, path); err != nil {
-				return errMsg{err: err}
-			}
-		}
-
 		// If the shell session already exists, attach by stable session ID.
 		if shellSessionID != "" {
 			return attachMsg{session: shellSessionID}
 		}
 
-		shellCmd := os.Getenv("SHELL")
-		if shellCmd == "" {
-			shellCmd = "/bin/sh"
+		if isProject {
+			if _, err := hrd.EnsureWorkspace(ref, herd.EnsureOpts{AutoClone: true, Provision: true}); err != nil && !errors.Is(err, herd.ErrWorktreeExists) {
+				return errMsg{err: err}
+			}
 		}
 
-		// Construct a project-bound hook. The existing group-3 branch above
-		// may have already done this (shadowing `h`), but the worktree-item
-		// path does not — so always resolve from cfg here.
-		projCfg := cfg.Projects[project]
-		h := hooks.New(projCfg.Hooks)
-
-		sesSvc := session.NewService(tmuxClient, h)
-		sessionID, err := sesSvc.Start(session.StartRequest{
-			Project:  project,
-			Branch:   branch,
-			Path:     path,
-			CloneDir: projectCloneDir(cfg, projCfg),
-			Type:     semconv.SessionTypeShell,
-			Cmd:      shellCmd,
-			Profile:  profile,
-		})
+		handle, err := hrd.Launch(ref, herd.LaunchOpts{Type: herd.SessionTypeShell})
 		if err != nil {
 			return errMsg{err: err}
 		}
-		return attachMsg{session: sessionID}
+		return attachMsg{session: handle.ID}
 	}
 }
 
@@ -255,14 +159,11 @@ func (m Model) cloneAction() tea.Cmd {
 		return nil
 	}
 
-	cfg := m.cfg
+	hrd := m.herd
 	project := sel.Project
-	projCfg := cfg.Projects[project]
 
 	return func() tea.Msg {
-		h := hooks.New(projCfg.Hooks)
-		projSvc := projectpkg.NewService(cfg, projectpkg.NewRealGitRunner(), h)
-		if err := projSvc.Clone(project); err != nil {
+		if err := hrd.Clone(project); err != nil {
 			return errMsg{err: err}
 		}
 		return cloneDoneMsg{project: project}
@@ -318,38 +219,12 @@ func (m Model) updateConfirmDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) confirmDeleteAll() (tea.Model, tea.Cmd) {
-	target := m.confirm.target
-	m.confirm = nil
-	m.screen = screenList
-
-	wtSvc := m.wtSvc
-	tmuxClient := m.tmuxClient
-	project := target.Project
-	branch := target.Branch
-	agentID := target.AgentSessionID
-	shellID := target.ShellSessionID
+	ref := m.confirm.target.Ref // identity from herd.List — never a display string
+	hrd := m.herd
+	m.confirm, m.screen = nil, screenList
 
 	return m, func() tea.Msg {
-		// Kill by tmux session ID, never by a rebuilt session name: the name
-		// depends on the active profile and on the identity branch, either of
-		// which can differ from what this item displays. A lookup miss here
-		// would leave the session — and the agent process under it — alive
-		// while the worktree is force-deleted out from under it.
-		for _, id := range []string{agentID, shellID} {
-			if id == "" {
-				continue
-			}
-			if err := tmuxClient.KillSession(id); err != nil {
-				return errMsg{err: fmt.Errorf("killing session %s: %w", id, err)}
-			}
-		}
-
-		err := wtSvc.Delete(worktree.DeleteRequest{
-			Project: project,
-			Branch:  branch,
-			Force:   true,
-		})
-		if err != nil {
+		if err := hrd.Teardown(ref, herd.TeardownOpts{Force: true}); err != nil {
 			return errMsg{err: err}
 		}
 		return m.refreshCmd()()
@@ -357,32 +232,26 @@ func (m Model) confirmDeleteAll() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) confirmDeleteAgent() (tea.Model, tea.Cmd) {
-	target := m.confirm.target
-	m.confirm = nil
-	m.screen = screenList
-
-	tmuxClient := m.tmuxClient
-	agentID := target.AgentSessionID
+	ref := m.confirm.target.Ref
+	hrd := m.herd
+	m.confirm, m.screen = nil, screenList
 
 	return m, func() tea.Msg {
-		if agentID != "" {
-			_ = tmuxClient.KillSession(agentID)
+		if _, err := hrd.StopSessions(ref, herd.StopOpts{Type: herd.SessionTypeAgent}); err != nil {
+			return errMsg{err: err}
 		}
 		return m.refreshCmd()()
 	}
 }
 
 func (m Model) confirmDeleteShell() (tea.Model, tea.Cmd) {
-	target := m.confirm.target
-	m.confirm = nil
-	m.screen = screenList
-
-	tmuxClient := m.tmuxClient
-	shellID := target.ShellSessionID
+	ref := m.confirm.target.Ref
+	hrd := m.herd
+	m.confirm, m.screen = nil, screenList
 
 	return m, func() tea.Msg {
-		if shellID != "" {
-			_ = tmuxClient.KillSession(shellID)
+		if _, err := hrd.StopSessions(ref, herd.StopOpts{Type: herd.SessionTypeShell}); err != nil {
+			return errMsg{err: err}
 		}
 		return m.refreshCmd()()
 	}
@@ -395,83 +264,16 @@ func (m Model) confirmDeleteNo() (tea.Model, tea.Cmd) {
 }
 
 // startSessionAfterCreate starts an agent session for a newly created worktree.
+// Provisioning already happened in form.submit's EnsureWorkspace, so this only
+// launches the session — running templates here too would render them twice.
 func (m Model) startSessionAfterCreate(msg worktreeCreatedMsg) tea.Cmd {
-	cfg := m.cfg
-	tmuxClient := m.tmuxClient
-	projCfg := cfg.Projects[msg.project]
-	profile := m.activeProfile()
+	hrd := m.herd
 
 	return func() tea.Msg {
-		agent, err := cfg.AgentByName(msg.agent)
+		handle, err := hrd.Launch(msg.ref, herd.LaunchOpts{Agent: msg.agent})
 		if err != nil {
 			return errMsg{err: err}
 		}
-
-		h := hooks.New(projCfg.Hooks)
-
-		if err := runFileCopyAndTemplate(cfg, projCfg, h, msg.project, msg.branch, msg.path); err != nil {
-			return errMsg{err: err}
-		}
-
-		agentCmd := agent.Command()
-		sesSvc := session.NewService(tmuxClient, h)
-		sessionID, err := sesSvc.Start(session.StartRequest{
-			Project:  msg.project,
-			Branch:   msg.branch,
-			Path:     msg.path,
-			CloneDir: projectCloneDir(cfg, projCfg),
-			Cmd:      agentCmd,
-			Env:      agent.Env,
-			Profile:  profile,
-		})
-		if err != nil {
-			return errMsg{err: err}
-		}
-		return attachMsg{session: sessionID}
+		return attachMsg{session: handle.ID}
 	}
-}
-
-// projectCloneDir returns the main git clone path for a project, or "" when
-// the project's repo URL can't be parsed. Matches the cmd/ helpers so the
-// CODEHERD_CLONE_DIR env var is either a valid path or absent.
-func projectCloneDir(cfg *config.Config, projCfg config.ProjectConfig) string {
-	repoPath, err := config.RepoPath(projCfg.Repo)
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
-}
-
-// runFileCopyAndTemplate runs file copy and herd template processing for a worktree.
-func runFileCopyAndTemplate(cfg *config.Config, projCfg config.ProjectConfig, h hooks.Hook, proj, branch, wtPath string) error {
-	if len(projCfg.Files) > 0 {
-		repoPath, _ := config.RepoPath(projCfg.Repo)
-		cloneDir := filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
-		copySvc := filecopy.New(h)
-		attrs := map[string]string{
-			semconv.HookAttrProject:      proj,
-			semconv.HookAttrBranch:       branch,
-			semconv.HookAttrWorktreePath: wtPath,
-		}
-		if err := copySvc.Copy(projCfg.Files, cloneDir, wtPath, attrs); err != nil {
-			return fmt.Errorf("file copy: %w", err)
-		}
-	}
-
-	tmplSvc := herdtemplate.New(h)
-	tmplAttrs := map[string]string{
-		semconv.HookAttrProject:      proj,
-		semconv.HookAttrBranch:       branch,
-		semconv.HookAttrWorktreePath: wtPath,
-	}
-	if _, err := tmplSvc.Process(herdtemplate.ProcessContext{
-		Project:      proj,
-		Branch:       branch,
-		WorktreePath: wtPath,
-		SessionName:  semconv.SessionName("", proj, branch),
-	}, tmplAttrs); err != nil {
-		return fmt.Errorf("template processing: %w", err)
-	}
-
-	return nil
 }

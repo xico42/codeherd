@@ -15,6 +15,7 @@ const (
 	TmuxOptionSessionType   = "@codeherd_session_type"
 	TmuxOptionProfile       = "@codeherd_profile"
 	TmuxOptionBranch        = "@codeherd_branch"
+	TmuxOptionProject       = "@codeherd_project"
 
 	StatusRunning = "running"
 	StatusWaiting = "waiting"

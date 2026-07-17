@@ -8,7 +8,10 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/git"
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/semconv"
+	"github.com/xico42/codeherd/internal/tmux"
 )
 
 var (
@@ -17,6 +20,9 @@ var (
 	profileFlag string
 	cfg         *config.Config
 	registry    *config.ProfileRegistry
+	// h is the domain. It is the only service any command constructs, and
+	// it is constructed exactly once, here.
+	h *herd.Herd
 )
 
 var rootCmd = &cobra.Command{
@@ -39,6 +45,10 @@ It is like a shepherd, but for coding agents :).
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
 		}
+		h = herd.New(cfg, registry, herd.Deps{
+			Tmux: tmux.NewRealRunner(),
+			Git:  git.NewRealRunner(),
+		})
 		return nil
 	},
 }
@@ -72,7 +82,7 @@ func Execute(version string) error {
 	resetAllFlags(rootCmd)
 	rootCmd.Version = version
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		return fmt.Errorf("%w", err)
 	}
 	return nil

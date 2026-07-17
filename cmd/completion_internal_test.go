@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/worktree"
+	"github.com/xico42/codeherd/internal/herd"
 )
 
 // withStubConfig swaps loadCompletionConfig for the duration of a test.
@@ -22,8 +22,8 @@ func withStubConfig(t *testing.T, c *config.Config) {
 func TestCompleteRemoteBranches(t *testing.T) {
 	orig := completionRemoteBrancher
 	t.Cleanup(func() { completionRemoteBrancher = orig })
-	completionRemoteBrancher = func(_ *config.Config, project string) ([]worktree.RemoteBranch, error) {
-		return []worktree.RemoteBranch{
+	completionRemoteBrancher = func(project string) ([]herd.RemoteBranch, error) {
+		return []herd.RemoteBranch{
 			{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"},
 			{Remote: "upstream", Branch: "fix-y", Ref: "upstream/fix-y"},
 		}, nil
@@ -96,13 +96,13 @@ func TestCompleteProjects_sorted(t *testing.T) {
 }
 
 func TestBranchNames_dedupAndSkipEmpty(t *testing.T) {
-	entries := []worktree.ListEntry{
-		{Project: "p", Branch: "main"},
-		{Project: "p", Branch: ""},
-		{Project: "p", Branch: "feature"},
-		{Project: "p", Branch: "main"},
+	spaces := []herd.Workspace{
+		{Ref: herd.Ref{Project: "p", Branch: "main"}},
+		{Ref: herd.Ref{Project: "p", Branch: ""}},
+		{Ref: herd.Ref{Project: "p", Branch: "feature"}},
+		{Ref: herd.Ref{Project: "p", Branch: "main"}},
 	}
-	got := branchNames(entries)
+	got := branchNames(spaces)
 	want := []string{"feature", "main"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("branchNames = %v, want %v", got, want)
@@ -122,9 +122,12 @@ func TestCompleteBranches_needsProject(t *testing.T) {
 func TestCompleteBranches_listsForProject(t *testing.T) {
 	orig := completionBranchLister
 	var gotProject string
-	completionBranchLister = func(_ *config.Config, project string) ([]worktree.ListEntry, error) {
+	completionBranchLister = func(project string) ([]herd.Workspace, error) {
 		gotProject = project
-		return []worktree.ListEntry{{Branch: "main"}, {Branch: "dev"}}, nil
+		return []herd.Workspace{
+			{Ref: herd.Ref{Branch: "main"}},
+			{Ref: herd.Ref{Branch: "dev"}},
+		}, nil
 	}
 	t.Cleanup(func() { completionBranchLister = orig })
 	withStubConfig(t, &config.Config{})
@@ -144,7 +147,7 @@ func TestCompleteBranches_listsForProject(t *testing.T) {
 
 func TestCompleteBranches_listerErrorYieldsNothing(t *testing.T) {
 	orig := completionBranchLister
-	completionBranchLister = func(*config.Config, string) ([]worktree.ListEntry, error) {
+	completionBranchLister = func(string) ([]herd.Workspace, error) {
 		return nil, errors.New("boom")
 	}
 	t.Cleanup(func() { completionBranchLister = orig })
@@ -162,8 +165,8 @@ func TestCompleteBranches_listerErrorYieldsNothing(t *testing.T) {
 func TestCompleteProjectThenBranch_dispatch(t *testing.T) {
 	withStubConfig(t, &config.Config{Projects: map[string]config.ProjectConfig{"alpha": {}}})
 	orig := completionBranchLister
-	completionBranchLister = func(*config.Config, string) ([]worktree.ListEntry, error) {
-		return []worktree.ListEntry{{Branch: "main"}}, nil
+	completionBranchLister = func(string) ([]herd.Workspace, error) {
+		return []herd.Workspace{{Ref: herd.Ref{Branch: "main"}}}, nil
 	}
 	t.Cleanup(func() { completionBranchLister = orig })
 

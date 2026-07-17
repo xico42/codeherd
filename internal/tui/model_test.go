@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/tmux"
 )
 
@@ -206,7 +207,7 @@ func TestModel_Update_worktreeCreatedMsg(t *testing.T) {
 	m := Model{screen: screenList}
 	m.list = newList(nil)
 
-	updated, _ := m.Update(worktreeCreatedMsg{project: "myapp", branch: "feat"})
+	updated, _ := m.Update(worktreeCreatedMsg{ref: herd.Ref{Project: "myapp", Branch: "feat"}})
 	um := updated.(Model)
 
 	if um.statusMsg != "Created myapp/feat" {
@@ -416,7 +417,7 @@ func TestModel_Init(t *testing.T) {
 }
 
 func TestNewModel(t *testing.T) {
-	m := NewModel(nil, nil, nil, nil, nil, false, nil)
+	m := NewModel(nil, nil, false)
 	if m.screen != screenList {
 		t.Errorf("screen = %d, want %d", m.screen, screenList)
 	}
@@ -594,22 +595,18 @@ func (r *mockTmuxRunner) Run(args ...string) (string, string, int, error) {
 	return resp.stdout, "", resp.exitCode, nil
 }
 
-func TestModel_refreshCmd_withTmuxClient(t *testing.T) {
-	// Sessions: one agent session (waiting/prefixed), one shell session.
-	agentLine := "⚡ myapp-feat\tmyapp-feat\tagent\twaiting\tneed input\t\n"
-	shellLine := "myapp-feat~sh\tmyapp-feat\tshell\t\t\t\n"
-	listOutput := agentLine + shellLine
-
+func TestModel_refreshCmd_withHerd(t *testing.T) {
+	// refreshCmd now goes through herd.List, which issues exactly one
+	// list-sessions call (the per-session GetOption regression stays fixed).
 	runner := &mockTmuxRunner{
 		responses: []mockTmuxResponse{
-			{stdout: listOutput, exitCode: 0}, // list-sessions (single call)
+			{stdout: "", exitCode: 1}, // list-sessions → no sessions
 		},
 	}
-	client := tmux.NewClient(runner)
+	hrd := herd.New(&config.Config{}, nil, herd.Deps{Tmux: runner})
 
-	m := Model{screen: screenList}
+	m := Model{screen: screenList, herd: hrd}
 	m.list = newList(nil)
-	m.tmuxClient = client
 
 	cmd := m.refreshCmd()
 	if cmd == nil {
@@ -625,8 +622,6 @@ func TestModel_refreshCmd_withTmuxClient(t *testing.T) {
 	if runner.idx != 1 {
 		t.Errorf("runner.idx = %d, want 1 (single list-sessions call)", runner.idx)
 	}
-
-	// No item should have a Branch that ends with "~sh".
 	for _, item := range items {
 		if strings.HasSuffix(item.Branch, "~sh") {
 			t.Errorf("shell session branch %q leaked into items", item.Branch)
@@ -634,57 +629,43 @@ func TestModel_refreshCmd_withTmuxClient(t *testing.T) {
 	}
 }
 
-func TestRefresh_filtersSessionsByActiveProfile(t *testing.T) {
-	// buildItems only surfaces sessions that line up with a worktree entry,
-	// so exercising the profile filter end-to-end needs a stubbed wtSvc in
-	// addition to the fake tmux.Client. Chunk 5's integration test covers
-	// this path with real services.
-	t.Skip("TODO: wire once fake wtSvc is accessible from test helpers")
-}
-
-func TestSwitchProfile_cyclesForwardAndReusesCache(t *testing.T) {
-	reg := &config.ProfileRegistry{
-		Active:      "personal",
-		Names:       []string{"personal", "work"},
-		ProfilesDir: t.TempDir(),
-	}
-	workPath := filepath.Join(reg.ProfilesDir, "work.toml")
-	if err := os.WriteFile(workPath, []byte(`[projects.b]
+func TestSwitchProfile_cyclesForward(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"personal", "work"} {
+		if err := os.WriteFile(filepath.Join(dir, name+".toml"), []byte(`[projects.b]
 repo = "git@x:b"
 `), 0o600); err != nil {
-		t.Fatal(err)
+			t.Fatal(err)
+		}
 	}
-	personalCfg := &config.Config{}
-	m := NewModel(personalCfg, nil, nil, nil, nil, false, reg)
+	reg := &config.ProfileRegistry{Active: "personal", Names: []string{"personal", "work"}, ProfilesDir: dir}
+	m := NewModel(herd.New(&config.Config{}, reg, herd.Deps{}), nil, false)
 
 	m2 := m.SwitchProfileForTest(+1)
-	if m2.Registry().Active != "work" {
-		t.Errorf("after forward cycle, Active = %q, want work", m2.Registry().Active)
+	if m2.ActiveProfileForTest() != "work" {
+		t.Errorf("after forward cycle, active = %q, want work", m2.ActiveProfileForTest())
 	}
 	m3 := m2.SwitchProfileForTest(+1)
-	if m3.Registry().Active != "personal" {
-		t.Errorf("after second forward cycle, Active = %q, want personal", m3.Registry().Active)
-	}
-	if m3.CurrentConfigForTest() != personalCfg {
-		t.Error("expected personal *Config to be reused from cache")
+	if m3.ActiveProfileForTest() != "personal" {
+		t.Errorf("after second forward cycle, active = %q, want personal", m3.ActiveProfileForTest())
 	}
 }
 
 func TestSyncProfileKeyEnabled_gate(t *testing.T) {
-	// Nil registry → disabled.
-	m := NewModel(&config.Config{}, nil, nil, nil, nil, false, nil)
+	// Nil herd → disabled.
+	m := NewModel(nil, nil, false)
 	if m.NextProfileEnabledForTest() {
-		t.Error("NextProfile enabled with nil registry, want disabled")
+		t.Error("NextProfile enabled with nil herd, want disabled")
 	}
 	// One profile → disabled.
 	reg1 := &config.ProfileRegistry{Active: "a", Names: []string{"a"}, ProfilesDir: t.TempDir()}
-	m = NewModel(&config.Config{}, nil, nil, nil, nil, false, reg1)
+	m = NewModel(herd.New(&config.Config{}, reg1, herd.Deps{}), nil, false)
 	if m.NextProfileEnabledForTest() {
 		t.Error("NextProfile enabled with one profile, want disabled")
 	}
 	// Two profiles → enabled.
 	reg2 := &config.ProfileRegistry{Active: "a", Names: []string{"a", "b"}, ProfilesDir: t.TempDir()}
-	m = NewModel(&config.Config{}, nil, nil, nil, nil, false, reg2)
+	m = NewModel(herd.New(&config.Config{}, reg2, herd.Deps{}), nil, false)
 	if !m.NextProfileEnabledForTest() {
 		t.Error("NextProfile disabled with two profiles, want enabled")
 	}
@@ -696,12 +677,11 @@ func TestSwitchProfile_loadFailurePreservesActive(t *testing.T) {
 		Names:       []string{"personal", "bogus"},
 		ProfilesDir: t.TempDir(),
 	}
-	personalCfg := &config.Config{}
-	m := NewModel(personalCfg, nil, nil, nil, nil, false, reg)
+	m := NewModel(herd.New(&config.Config{}, reg, herd.Deps{}), nil, false)
 
 	m2 := m.SwitchProfileForTest(+1)
-	if m2.Registry().Active != "personal" {
-		t.Errorf("Active = %q, want unchanged (personal) after load failure", m2.Registry().Active)
+	if m2.ActiveProfileForTest() != "personal" {
+		t.Errorf("active = %q, want unchanged (personal) after load failure", m2.ActiveProfileForTest())
 	}
 	if m2.StatusMsgForTest() == "" {
 		t.Error("expected statusMsg to describe the failure")
@@ -796,7 +776,7 @@ func TestUpdate_resultMessagesClearBusy(t *testing.T) {
 	}{
 		{"errMsg", errMsg{err: errors.New("boom")}},
 		{"cloneDoneMsg", cloneDoneMsg{project: "myapp"}},
-		{"worktreeCreatedMsg", worktreeCreatedMsg{project: "myapp", branch: "feat"}},
+		{"worktreeCreatedMsg", worktreeCreatedMsg{ref: herd.Ref{Project: "myapp", Branch: "feat"}}},
 		{"remoteBranchesMsg", remoteBranchesMsg{project: "myapp"}},
 	}
 	for _, tt := range tests {

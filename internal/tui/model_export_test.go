@@ -9,7 +9,7 @@ func (m Model) SwitchProfileForTest(direction int) Model {
 	return m2
 }
 
-func (m Model) Registry() *config.ProfileRegistry { return m.registry }
+func (m Model) ActiveProfileForTest() string { return m.activeProfile() }
 
 func (m Model) CurrentConfigForTest() *config.Config { return m.cfg }
 

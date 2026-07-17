@@ -6,11 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/xico42/codeherd/internal/hooks"
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/notify"
 	"github.com/xico42/codeherd/internal/semconv"
-	"github.com/xico42/codeherd/internal/session"
-	"github.com/xico42/codeherd/internal/tmux"
 )
 
 const maxAnnotationLen = 120
@@ -44,22 +42,20 @@ var pluginHandleClaudeCmd = &cobra.Command{
 			return nil // fail-open
 		}
 
-		tc := tmux.NewClient(tmux.NewRealRunner())
-		sesSvc := session.NewService(tc, &hooks.NoOp{})
 		notifySvc := notify.NewDefaultService()
 
 		switch input.HookEventName {
 		case "UserPromptSubmit":
-			_ = sesSvc.SetStatus(sessionName, semconv.StatusRunning, "")
+			_ = h.SetStatus(sessionName, herd.StatusRunning, "")
 
 		case "Notification":
 			annotation := truncate(input.Message, maxAnnotationLen)
-			_ = sesSvc.SetStatus(sessionName, semconv.StatusWaiting, annotation)
+			_ = h.SetStatus(sessionName, herd.StatusWaiting, annotation)
 			_ = notifySvc.Send("codeherd", annotation)
 
 		case "Stop":
 			annotation := truncate(input.LastAssistantMessage, maxAnnotationLen)
-			_ = sesSvc.SetStatus(sessionName, semconv.StatusWaiting, annotation)
+			_ = h.SetStatus(sessionName, herd.StatusWaiting, annotation)
 			_ = notifySvc.Send("codeherd", annotation)
 		}
 

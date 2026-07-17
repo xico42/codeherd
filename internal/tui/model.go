@@ -14,12 +14,8 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/hooks"
-	"github.com/xico42/codeherd/internal/project"
-	"github.com/xico42/codeherd/internal/semconv"
-	"github.com/xico42/codeherd/internal/session"
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/tmux"
-	"github.com/xico42/codeherd/internal/worktree"
 )
 
 const (
@@ -40,15 +36,14 @@ type errMsg struct{ err error }
 type attachMsg struct{ session string }
 type cloneDoneMsg struct{ project string }
 type worktreeCreatedMsg struct {
-	project string
-	branch  string
-	path    string
-	attach  bool
-	agent   string
+	ref    herd.Ref // identity — feed straight back into herd, never rebuilt
+	path   string
+	attach bool
+	agent  string
 }
 type remoteBranchesMsg struct {
 	project  string
-	branches []worktree.RemoteBranch
+	branches []herd.RemoteBranch
 	err      error
 }
 
@@ -60,9 +55,7 @@ type Model struct {
 	help   help.Model
 
 	cfg        *config.Config
-	wtSvc      *worktree.Service
-	sesSvc     *session.Service
-	projSvc    *project.Service
+	herd       *herd.Herd
 	tmuxClient *tmux.Client
 
 	width  int
@@ -97,55 +90,32 @@ type Model struct {
 
 	// Remote-branch picker sub-model.
 	remotePicker *remotePickerModel
-
-	// Profile state. registry is nil when profile mode is off.
-	// profileCache memoizes per-profile services built on demand by
-	// the switch flow; the initial active profile is seeded on construction.
-	registry     *config.ProfileRegistry
-	profileCache map[string]profileBundle
 }
 
-// profileBundle holds the per-profile services that must be rebuilt
-// when the active profile changes. sesSvc and tmuxClient are shared
-// across profiles and live directly on Model.
-type profileBundle struct {
-	cfg     *config.Config
-	wtSvc   *worktree.Service
-	projSvc *project.Service
-}
-
-// NewModel creates the TUI model with all required services.
-func NewModel(
-	cfg *config.Config,
-	wtSvc *worktree.Service,
-	sesSvc *session.Service,
-	projSvc *project.Service,
-	tmuxClient *tmux.Client,
-	insideTmux bool,
-	registry *config.ProfileRegistry,
-) Model {
+// NewModel creates the TUI model. The herd carries config, the active profile,
+// and every operation the TUI issues; the profile registry and per-profile
+// service cache the old Model held both collapse into it.
+func NewModel(hrd *herd.Herd, tmuxClient *tmux.Client, insideTmux bool) Model {
 	keys := defaultKeyMap()
 	l := newList(nil)
-	h := help.New()
+	hp := help.New()
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
-	m := Model{
-		screen:       screenList,
-		list:         l,
-		keys:         keys,
-		help:         h,
-		spinner:      sp,
-		cfg:          cfg,
-		wtSvc:        wtSvc,
-		sesSvc:       sesSvc,
-		projSvc:      projSvc,
-		tmuxClient:   tmuxClient,
-		InsideTmux:   insideTmux,
-		registry:     registry,
-		profileCache: map[string]profileBundle{},
+	var cfg *config.Config
+	if hrd != nil {
+		cfg = hrd.Config()
 	}
-	if registry != nil {
-		m.profileCache[registry.Active] = profileBundle{cfg: cfg, wtSvc: wtSvc, projSvc: projSvc}
+
+	m := Model{
+		screen:     screenList,
+		list:       l,
+		keys:       keys,
+		help:       hp,
+		spinner:    sp,
+		cfg:        cfg,
+		herd:       hrd,
+		tmuxClient: tmuxClient,
+		InsideTmux: insideTmux,
 	}
 	m = m.syncProfileKeyEnabled()
 	return m
@@ -155,7 +125,7 @@ func NewModel(
 // are fewer than two profiles available (so they don't appear in help
 // output). Called at Model construction and after every profile switch.
 func (m Model) syncProfileKeyEnabled() Model {
-	enabled := m.registry != nil && len(m.registry.Names) > 1
+	enabled := m.herd != nil && len(m.herd.Profiles()) > 1
 	m.keys.NextProfile.SetEnabled(enabled)
 	m.keys.PrevProfile.SetEnabled(enabled)
 	return m
@@ -259,7 +229,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		m.busy = ""
 		if msg.err != nil {
-			m.statusMsg = msg.err.Error()
+			m.statusMsg = humanize(msg.err)
 		}
 		return m, nil
 
@@ -277,7 +247,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case worktreeCreatedMsg:
 		m.busy = ""
-		m.statusMsg = fmt.Sprintf("Created %s/%s", msg.project, msg.branch)
+		m.statusMsg = fmt.Sprintf("Created %s/%s", msg.ref.Project, msg.ref.Branch)
 		m.screen = screenList
 		m.form = nil
 		if msg.attach && msg.agent != "" {
@@ -289,7 +259,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.busy = ""
 		if m.remotePicker != nil && m.remotePicker.project == msg.project {
 			if msg.err != nil {
-				m.remotePicker.errText = msg.err.Error()
+				m.remotePicker.errText = humanize(msg.err)
 			} else {
 				m.remotePicker.setBranches(msg.branches)
 			}
@@ -413,8 +383,8 @@ func (m Model) viewList() string {
 	}
 
 	title := "codeherd"
-	if m.registry != nil {
-		title = title + " · " + m.registry.Active
+	if p := m.activeProfile(); p != "" {
+		title = title + " · " + p
 	}
 	tb := titleStyle.Render(title)
 	if agentCount > 0 {
@@ -458,101 +428,25 @@ func queryWindowSizeCmd() tea.Cmd {
 	}
 }
 
-// refreshCmd fetches all data from services asynchronously.
+// refreshCmd fetches every workspace from the herd asynchronously. The old
+// version rebuilt sessions, worktrees, projects, and clone dirs into a
+// refreshResult and recomputed identity; herd.List returns it already joined.
+// The profile-snapshot race the old closure guarded against is gone too:
+// m.herd is an immutable value, and WithProfile returns a new one rather than
+// mutating in place, so there is nothing to snapshot.
 func (m Model) refreshCmd() tea.Cmd {
-	wtSvc := m.wtSvc
-	tmuxClient := m.tmuxClient
-	cfg := m.cfg
-	// Snapshot active profile by value rather than capturing m.registry: the
-	// registry pointer is shared and mutated in place by switchProfile, so
-	// reading m.registry.Active from inside the closure would race with an
-	// in-flight switch. Capturing the string locks the filter to the profile
-	// that was active when refreshCmd was invoked.
-	var activeProfile string
-	if m.registry != nil {
-		activeProfile = m.registry.Active
-	}
-
+	hrd := m.herd
 	return func() tea.Msg {
-		data := refreshResult{
-			agentSessions:   make(map[string]agentInfo),
-			shellSessions:   make(map[string]string),
-			sessionBranch:   make(map[string]string),
-			defaultBranches: make(map[string]string),
-			profile:         activeProfile,
+		if hrd == nil {
+			return itemsMsg(nil)
 		}
-
-		// 1. Worktrees
-		if wtSvc != nil {
-			entries, err := wtSvc.List("")
-			if err == nil {
-				for _, e := range entries {
-					data.worktrees = append(data.worktrees, wtEntry{
-						project:  e.Project,
-						branch:   e.Branch,
-						path:     e.Path,
-						detached: e.Detached,
-					})
-				}
-			}
+		spaces, err := hrd.List("")
+		if err != nil {
+			return errMsg{err: err}
 		}
-
-		// 2. Agent sessions (query tmux for status)
-		if tmuxClient != nil {
-			records, err := tmuxClient.ListSessions()
-			if err == nil {
-				for _, r := range records {
-					// When profile mode is on, only surface sessions tagged
-					// with the active profile. Untagged sessions from a
-					// non-profile world stay hidden until the user switches
-					// profiles off.
-					if activeProfile != "" && r.Profile != activeProfile {
-						continue
-					}
-					switch r.SessionType {
-					case semconv.SessionTypeShell:
-						data.shellSessions[r.CanonicalName] = r.ID
-					case semconv.SessionTypeAgent:
-						data.agentSessions[r.CanonicalName] = agentInfo{
-							sessionID:  r.ID,
-							status:     r.Status,
-							annotation: r.Annotation,
-						}
-					}
-					data.sessionBranch[r.CanonicalName] = r.Branch
-				}
-			}
-		}
-
-		// 3. Project list with clone status
-		if cfg != nil {
-			for name := range cfg.Projects {
-				p := cfg.Projects[name]
-				cloned := false
-				if rp, err := config.RepoPath(p.Repo); err == nil {
-					path := semconv.CloneDir(cfg.Defaults.ProjectsDir, rp)
-					if _, err := os.Stat(path); err == nil {
-						cloned = true
-					}
-				}
-				data.projects = append(data.projects, projEntry{name: name, cloned: cloned})
-			}
-		}
-
-		// 4. Clone dirs for main worktree detection
-		if cfg != nil {
-			data.cloneDirs = make(map[string]string)
-			for name, p := range cfg.Projects {
-				data.defaultBranches[name] = p.DefaultBranch
-				if rp, err := config.RepoPath(p.Repo); err == nil {
-					data.cloneDirs[name] = semconv.CloneDir(cfg.Defaults.ProjectsDir, rp)
-				}
-			}
-		}
-
-		items := buildItems(data)
-		result := make([]Item, len(items))
-		for i, li := range items {
+		listItems := buildItems(hrd, spaces)
+		result := make([]Item, len(listItems))
+		for i, li := range listItems {
 			result[i] = li.(Item)
 		}
 		return itemsMsg(result)
@@ -571,12 +465,12 @@ func (m Model) switchClientCmd(session string) tea.Cmd {
 }
 
 // activeProfile returns the currently active profile, or "" when profile
-// mode is off. Safe to call when registry is nil.
+// mode is off. Safe to call when the herd is nil.
 func (m Model) activeProfile() string {
-	if m.registry == nil {
+	if m.herd == nil {
 		return ""
 	}
-	return m.registry.Active
+	return m.herd.Profile()
 }
 
 // selectedItem returns the currently selected Item, or nil.
@@ -589,39 +483,30 @@ func (m Model) selectedItem() *Item {
 }
 
 // switchProfile cycles the active profile by direction (+1 forward, -1 back).
-// On success, returns a new Model with cfg/wtSvc/projSvc swapped and issues
-// a refresh cmd. On failure, returns the receiver with statusMsg set.
+// On success, returns a new Model scoped to a herd for the next profile and
+// issues a refresh cmd. On failure, returns the receiver with statusMsg set.
 func (m Model) switchProfile(direction int) (Model, tea.Cmd) {
-	if m.registry == nil || len(m.registry.Names) < 2 {
+	if m.herd == nil {
 		return m, nil
 	}
-	idx := indexOf(m.registry.Names, m.registry.Active)
+	names := m.herd.Profiles()
+	if len(names) < 2 {
+		return m, nil
+	}
+	idx := indexOf(names, m.herd.Profile())
 	if idx < 0 {
 		return m, nil
 	}
-	n := len(m.registry.Names)
-	next := m.registry.Names[((idx+direction)%n+n)%n]
+	n := len(names)
+	next := names[((idx+direction)%n+n)%n]
 
-	bundle, ok := m.profileCache[next]
-	if !ok {
-		cfg, err := config.LoadProfile(m.registry.ProfilesDir, next)
-		if err != nil {
-			m.statusMsg = fmt.Sprintf("profile switch failed: %v", err)
-			return m, nil
-		}
-		wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), m.tmuxClient, &hooks.NoOp{})
-		projSvc := project.NewService(cfg, project.NewRealGitRunner(), &hooks.NoOp{})
-		bundle = profileBundle{cfg: cfg, wtSvc: wtSvc, projSvc: projSvc}
-		m.profileCache[next] = bundle
+	nextHerd, err := m.herd.WithProfile(next)
+	if err != nil {
+		m.statusMsg = fmt.Sprintf("profile switch failed: %v", err)
+		return m, nil
 	}
-
-	m.cfg = bundle.cfg
-	m.wtSvc = bundle.wtSvc
-	m.projSvc = bundle.projSvc
-	// Intentional shared-pointer mutation: the registry is owned by the TUI
-	// singleton; reads from any Model value must see the currently active
-	// profile.
-	m.registry.Active = next
+	m.herd = nextHerd
+	m.cfg = nextHerd.Config()
 	m = m.syncProfileKeyEnabled()
 	m.statusMsg = "Switched to profile " + next
 	return m, m.refreshCmd()
@@ -643,7 +528,7 @@ func (m Model) startRemotePicker() (tea.Model, tea.Cmd) {
 	if sel == nil || sel.Project == "" {
 		return m, nil
 	}
-	m.remotePicker = newRemotePicker(sel.Project, m.cfg, m.tmuxClient)
+	m.remotePicker = newRemotePicker(sel.Project)
 	m.screen = screenRemotePicker
 	m, cmd := m.enterBusy("Fetching remote branches…", m.fetchRemoteBranchesCmd(sel.Project))
 	return m, cmd
@@ -652,11 +537,9 @@ func (m Model) startRemotePicker() (tea.Model, tea.Cmd) {
 // fetchRemoteBranchesCmd fetches all remotes (best-effort) and lists the
 // remote-tracking branches for the project.
 func (m Model) fetchRemoteBranchesCmd(project string) tea.Cmd {
-	cfg := m.cfg
-	tmuxClient := m.tmuxClient
+	hrd := m.herd
 	return func() tea.Msg {
-		wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, &hooks.NoOp{})
-		branches, err := wtSvc.RemoteBranches(project)
+		branches, err := hrd.RemoteBranches(project, true)
 		return remoteBranchesMsg{project: project, branches: branches, err: err}
 	}
 }
@@ -687,9 +570,9 @@ func (m Model) updateRemotePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // showTrackForm opens the create-worktree form pre-filled to track the selected
 // remote branch, deriving the local branch name from it.
-func (m Model) showTrackForm(project string, rb worktree.RemoteBranch) (tea.Model, tea.Cmd) {
+func (m Model) showTrackForm(project string, rb herd.RemoteBranch) (tea.Model, tea.Cmd) {
 	ctx := formContext{project: project, tracksRef: rb.Ref, branch: rb.Branch}
-	m.form = newFormModel(ctx, m.cfg, m.tmuxClient)
+	m.form = newFormModel(ctx, m.cfg, m.herd)
 	m.screen = screenForm
 	return m, m.form.Init()
 }

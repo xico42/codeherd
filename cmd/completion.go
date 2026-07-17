@@ -6,10 +6,22 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/hooks"
+	"github.com/xico42/codeherd/internal/git"
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/tmux"
-	"github.com/xico42/codeherd/internal/worktree"
 )
+
+// ensureCompletionHerd builds the h global from the completion config when it
+// is nil. PersistentPreRunE does not run before completion functions (the same
+// reason loadCompletionConfig exists), so h is otherwise unset here.
+func ensureCompletionHerd(cmd *cobra.Command) {
+	if h == nil {
+		h = herd.New(loadCompletionConfig(cmd), nil, herd.Deps{
+			Tmux: tmux.NewRealRunner(),
+			Git:  git.NewRealRunner(),
+		})
+	}
+}
 
 // loadCompletionConfig loads config during a shell-completion call.
 // PersistentPreRunE does not run before completion functions, so the cfg
@@ -63,12 +75,10 @@ func completeProfiles(cmd *cobra.Command, _ []string, _ string) ([]string, cobra
 	return completionProfileNames(cmd), cobra.ShellCompDirectiveNoFileComp
 }
 
-// completionBranchLister lists worktree entries for a project during
-// completion. Declared as a var so tests can stub it without touching git
-// or tmux.
-var completionBranchLister = func(cfg *config.Config, project string) ([]worktree.ListEntry, error) {
-	svc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), &hooks.NoOp{})
-	return svc.List(project)
+// completionBranchLister lists workspaces for a project during completion.
+// Declared as a var so tests can stub it without touching git or tmux.
+var completionBranchLister = func(project string) ([]herd.Workspace, error) {
+	return h.List(project)
 }
 
 // completeBranches completes against the worktree branches of the project
@@ -78,27 +88,29 @@ func completeBranches(cmd *cobra.Command, args []string, _ string) ([]string, co
 	if len(args) == 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	entries, err := completionBranchLister(loadCompletionConfig(cmd), args[0])
+	ensureCompletionHerd(cmd)
+	spaces, err := completionBranchLister(args[0])
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	return branchNames(entries), cobra.ShellCompDirectiveNoFileComp
+	return branchNames(spaces), cobra.ShellCompDirectiveNoFileComp
 }
 
-// branchNames returns the sorted, deduplicated, non-empty branch names
-// from worktree entries.
-func branchNames(entries []worktree.ListEntry) []string {
-	seen := make(map[string]struct{}, len(entries))
+// branchNames returns the sorted, deduplicated, non-empty identity branch
+// names from a project's workspaces. Identity — not the display branch — is
+// what a user completing a command should type.
+func branchNames(spaces []herd.Workspace) []string {
+	seen := make(map[string]struct{}, len(spaces))
 	var names []string
-	for _, e := range entries {
-		if e.Branch == "" {
+	for _, ws := range spaces {
+		if ws.Ref.Branch == "" {
 			continue
 		}
-		if _, dup := seen[e.Branch]; dup {
+		if _, dup := seen[ws.Ref.Branch]; dup {
 			continue
 		}
-		seen[e.Branch] = struct{}{}
-		names = append(names, e.Branch)
+		seen[ws.Ref.Branch] = struct{}{}
+		names = append(names, ws.Ref.Branch)
 	}
 	sort.Strings(names)
 	return names
@@ -106,9 +118,8 @@ func branchNames(entries []worktree.ListEntry) []string {
 
 // completionRemoteBrancher lists a project's remote-tracking branches during
 // completion (no fetch). Declared as a var so tests can stub it.
-var completionRemoteBrancher = func(cfg *config.Config, project string) ([]worktree.RemoteBranch, error) {
-	svc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), &hooks.NoOp{})
-	return svc.ListRemoteBranches(project)
+var completionRemoteBrancher = func(project string) ([]herd.RemoteBranch, error) {
+	return h.RemoteBranches(project, false) // no fetch — completion must stay fast
 }
 
 // completeRemoteBranches completes the --track flag against the remote-tracking
@@ -117,7 +128,8 @@ func completeRemoteBranches(cmd *cobra.Command, args []string, _ string) ([]stri
 	if len(args) == 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	branches, err := completionRemoteBrancher(loadCompletionConfig(cmd), args[0])
+	ensureCompletionHerd(cmd)
+	branches, err := completionRemoteBrancher(args[0])
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}

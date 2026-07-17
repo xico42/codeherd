@@ -3,19 +3,11 @@ package cmd
 import (
 	"bufio"
 	"fmt"
-	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
-	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/filecopy"
-	"github.com/xico42/codeherd/internal/herdtemplate"
-	"github.com/xico42/codeherd/internal/hooks"
-	"github.com/xico42/codeherd/internal/semconv"
-	"github.com/xico42/codeherd/internal/session"
-	"github.com/xico42/codeherd/internal/tmux"
-	"github.com/xico42/codeherd/internal/worktree"
+	"github.com/xico42/codeherd/internal/herd"
 )
 
 // ── list ─────────────────────────────────────────────────────────────────────
@@ -38,23 +30,22 @@ func (c *ListWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 {
 		project = args[0]
 	}
-	svc := newWorktreeService()
-	entries, err := svc.List(project)
+	spaces, err := h.List(project)
 	if err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "PROJECT\tBRANCH\tPATH\tSESSION")
-	for _, e := range entries {
-		sess := e.Session
-		if sess == "" {
-			sess = "--"
+	for _, ws := range spaces {
+		sess := "--"
+		if ws.Agent != nil {
+			sess = ws.Agent.Ref.CanonicalName() + " (running)"
 		}
-		branch := e.Branch
+		branch := ws.DisplayBranch
 		if branch == "" {
 			branch = "(detached)"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.Project, branch, e.Path, sess)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", ws.Ref.Project, branch, ws.Path, sess)
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
@@ -101,101 +92,41 @@ func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("a <branch> argument is required unless --track is given")
 	}
 
-	projCfg := cfg.Projects[project]
-	h := hooks.New(projCfg.Hooks)
-
-	var cloneDir string
-	if repoPath, rpErr := config.RepoPath(projCfg.Repo); rpErr == nil {
-		cloneDir = filepath.Join(cfg.Defaults.ProjectsDir, repoPath)
-	}
-
-	svc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmux.NewClient(tmux.NewRealRunner()), h)
-	var result worktree.NewResult
-	var err error
 	switch {
 	case c.Track != "":
 		fmt.Fprintf(cmd.OutOrStdout(), "Checking out %s into a new worktree...  ", c.Track)
-		result, err = svc.NewTracking(project, posBranch, c.Track)
-	case c.From != "":
-		fmt.Fprintf(cmd.OutOrStdout(), "Creating worktree %s/%s...  ", project, posBranch)
-		result, err = svc.NewFrom(project, posBranch, c.From)
 	default:
 		fmt.Fprintf(cmd.OutOrStdout(), "Creating worktree %s/%s...  ", project, posBranch)
-		result, err = svc.New(project, posBranch)
 	}
+
+	ws, err := h.EnsureWorkspace(h.Ref(project, posBranch), herd.EnsureOpts{
+		AutoClone:  false, // the CLI never auto-clones — previously implicit, now stated
+		Provision:  true,
+		StartPoint: c.From,
+		Track:      c.Track,
+	})
 	if err != nil {
 		fmt.Fprintln(cmd.OutOrStdout())
-		return worktreeErr(cmd, project, posBranch, err)
-	}
-
-	branch := result.Branch
-
-	// File copy
-	if len(projCfg.Files) > 0 {
-		copySvc := filecopy.New(h)
-		attrs := map[string]string{
-			semconv.HookAttrProject:      project,
-			semconv.HookAttrBranch:       branch,
-			semconv.HookAttrWorktreePath: result.Path,
-		}
-		if err := copySvc.Copy(projCfg.Files, cloneDir, result.Path, attrs); err != nil {
-			return fmt.Errorf("copying files: %w", err)
-		}
-	}
-
-	// Template processing
-	tmplSvc := herdtemplate.New(h)
-	tmplAttrs := map[string]string{
-		semconv.HookAttrProject:      project,
-		semconv.HookAttrBranch:       branch,
-		semconv.HookAttrWorktreePath: result.Path,
-	}
-	if _, err := tmplSvc.Process(herdtemplate.ProcessContext{
-		Project:      project,
-		Branch:       branch,
-		WorktreePath: result.Path,
-		SessionName:  semconv.SessionName("", project, branch),
-	}, tmplAttrs); err != nil {
-		return fmt.Errorf("processing templates: %w", err)
+		return herdErr(project, posBranch, err)
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), "done")
-	fmt.Fprintf(cmd.OutOrStdout(), "  Path: %s\n", result.Path)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Path: %s\n", ws.Path)
 
 	if c.Attach {
 		flagAgent := ""
 		if cmd.Flags().Changed("agent") {
 			flagAgent = c.Agent
 		}
-		agentName, err := resolveAgentName(flagAgent)
-		if err != nil {
-			return err
-		}
-		agent, err := cfg.AgentByName(agentName)
-		if err != nil {
-			return fmt.Errorf("resolving agent: %w", err)
-		}
-
-		name := semconv.SessionName("", project, branch)
-		fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
-
-		sesSvc := session.NewService(tmux.NewClient(tmux.NewRealRunner()), h)
-		sessionID, err := sesSvc.Start(session.StartRequest{
-			Project:  project,
-			Branch:   branch,
-			Path:     result.Path,
-			CloneDir: cloneDir,
-			Cmd:      agent.Command(),
-			Env:      agent.Env,
-			Attach:   true,
-		})
+		// ws.Ref is authoritative — Track may have derived a different local branch.
+		fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", ws.Ref.CanonicalName())
+		handle, err := h.Launch(ws.Ref, herd.LaunchOpts{Agent: flagAgent, Attach: true})
 		if err != nil {
 			fmt.Fprintln(cmd.OutOrStdout())
-			return fmt.Errorf("starting session: %w", err)
+			return herdErr(ws.Ref.Project, ws.Ref.Branch, err)
 		}
-
 		fmt.Fprintln(cmd.OutOrStdout(), "done")
-		return execTmuxAttach(sessionID)
+		return execTmuxAttach(handle.ID)
 	}
 
 	return nil
@@ -234,15 +165,9 @@ func (c *DeleteWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Deleting worktree %s/%s...  ", project, branch)
-	svc := newWorktreeService()
-	err := svc.Delete(worktree.DeleteRequest{
-		Project: project,
-		Branch:  branch,
-		Force:   c.Force,
-	})
-	if err != nil {
+	if err := h.Teardown(h.Ref(project, branch), herd.TeardownOpts{Force: c.Force}); err != nil {
 		fmt.Fprintln(cmd.OutOrStdout())
-		return worktreeErr(cmd, project, branch, err)
+		return herdErr(project, branch, err)
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), "done")

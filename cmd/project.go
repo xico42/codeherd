@@ -3,13 +3,11 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
-	"github.com/xico42/codeherd/internal/hooks"
-	"github.com/xico42/codeherd/internal/project"
+	"github.com/xico42/codeherd/internal/herd"
 )
 
 // ── ListProjectCmd ───────────────────────────────────────────────────
@@ -27,8 +25,7 @@ func (c *ListProjectCmd) Cobra() *cobra.Command {
 }
 
 func (c *ListProjectCmd) Run(cmd *cobra.Command, args []string) error {
-	svc := newProjectService()
-	entries := svc.List()
+	entries := h.Projects()
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "NAME\tREPO\tBRANCH")
 	for _, e := range entries {
@@ -56,8 +53,7 @@ func (c *ShowProjectCmd) Cobra() *cobra.Command {
 }
 
 func (c *ShowProjectCmd) Run(cmd *cobra.Command, args []string) error {
-	svc := newProjectService()
-	e, err := svc.Show(args[0])
+	e, err := h.Project(args[0])
 	if err != nil {
 		return fmt.Errorf("show project: %w", err)
 	}
@@ -97,22 +93,15 @@ func (c *CloneProjectCmd) Cobra() *cobra.Command {
 
 func (c *CloneProjectCmd) Run(cmd *cobra.Command, args []string) error {
 	if c.All {
-		names := make([]string, 0, len(cfg.Projects))
-		for name := range cfg.Projects {
-			names = append(names, name)
-		}
-		sort.Strings(names)
 		hadFailure := false
-		for _, name := range names {
-			projCfg := cfg.Projects[name]
-			h := hooks.New(projCfg.Hooks)
-			svc := project.NewService(cfg, project.NewRealGitRunner(), h)
-			err := svc.Clone(name)
+		for _, p := range h.Projects() {
+			name := p.Name
+			err := h.Clone(name)
 			switch {
 			case err == nil:
 				fmt.Fprintf(cmd.OutOrStdout(), "Cloning %s... done\n", name)
 			default:
-				var ace *project.AlreadyClonedError
+				var ace *herd.AlreadyClonedError
 				if errors.As(err, &ace) {
 					fmt.Fprintf(cmd.OutOrStdout(), "Warning: %s\n", ace)
 				} else {
@@ -131,20 +120,17 @@ func (c *CloneProjectCmd) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("requires a project name, or use --all")
 	}
 	name := args[0]
-	projCfg := cfg.Projects[name]
-	h := hooks.New(projCfg.Hooks)
-	svc := project.NewService(cfg, project.NewRealGitRunner(), h)
 	fmt.Fprintf(cmd.OutOrStdout(), "Cloning %s... ", name)
-	err := svc.Clone(name)
+	err := h.Clone(name)
 	switch {
 	case err == nil:
 		fmt.Fprintln(cmd.OutOrStdout(), "done")
-		if e, showErr := svc.Show(name); showErr == nil {
+		if e, showErr := h.Project(name); showErr == nil {
 			fmt.Fprintf(cmd.OutOrStdout(), "  Path: %s\n", e.Path)
 		}
 	default:
 		fmt.Fprintln(cmd.OutOrStdout())
-		var ace *project.AlreadyClonedError
+		var ace *herd.AlreadyClonedError
 		if errors.As(err, &ace) {
 			fmt.Fprintf(cmd.OutOrStdout(), "Warning: %s\n", ace)
 		} else {

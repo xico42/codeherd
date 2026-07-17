@@ -9,7 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/worktree"
+	"github.com/xico42/codeherd/internal/herd"
 )
 
 func TestNewFormModel_trackPrefill(t *testing.T) {
@@ -27,7 +27,7 @@ func TestNewFormModel_trackPrefill(t *testing.T) {
 func TestShowTrackForm_opensFormScreen(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.ProjectConfig{"myapp": {}}}
 	m := Model{cfg: cfg}
-	updated, _ := m.showTrackForm("myapp", worktree.RemoteBranch{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"})
+	updated, _ := m.showTrackForm("myapp", herd.RemoteBranch{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"})
 	mm := updated.(Model)
 	if mm.screen != screenForm {
 		t.Errorf("screen = %d, want screenForm", mm.screen)

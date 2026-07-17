@@ -5,6 +5,7 @@ import (
 
 	"charm.land/bubbles/v2/list"
 
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/semconv"
 )
 
@@ -17,8 +18,13 @@ const (
 
 // Item represents a single entry in the TUI list.
 type Item struct {
+	// Ref is identity, carried straight from herd.List. Every action feeds
+	// this back into herd — never a rebuilt (project, display-branch) pair,
+	// which is what orphaned an agent against a deleted worktree.
+	Ref herd.Ref
+
 	Project        string
-	Branch         string
+	Branch         string // display branch (herd.Workspace.DisplayBranch) — rendering only
 	Path           string
 	Group          int
 	HasAgent       bool
@@ -39,91 +45,38 @@ func (i Item) FilterValue() string {
 	return i.Project
 }
 
-// refreshResult holds raw data collected during a refresh cycle.
-type refreshResult struct {
-	worktrees       []wtEntry
-	agentSessions   map[string]agentInfo // keyed by canonical session name
-	shellSessions   map[string]string    // canonical session name → tmux session_id
-	sessionBranch   map[string]string    // canonical session name → raw branch (@codeherd_branch)
-	projects        []projEntry
-	cloneDirs       map[string]string // project name -> clone dir path
-	defaultBranches map[string]string // project name -> config.DefaultBranch
-	profile         string            // active profile, "" when profile mode is off
-}
-
-type wtEntry struct {
-	project  string
-	branch   string
-	path     string
-	detached bool
-}
-
-type agentInfo struct {
-	sessionID  string // tmux session_id — stable identifier for attach
-	status     string
-	annotation string
-}
-
-type projEntry struct {
-	name   string
-	cloned bool
-}
-
-// buildItems transforms refresh data into a sorted slice of list items.
-func buildItems(data refreshResult) []list.Item {
-	// Track which projects have worktrees.
+// buildItems turns the workspaces herd.List returned into sorted list items,
+// then appends a row for every configured project that has no worktree yet.
+//
+// The identity derivation the TUI used to do here — WorktreeIdentityBranch,
+// SessionName, the divergence switch, the display fallbacks — is gone: herd
+// computed it once, and each Workspace already carries its identity Ref and
+// display branch.
+func buildItems(hrd *herd.Herd, spaces []herd.Workspace) []list.Item {
 	projectHasWorktree := make(map[string]bool)
 
 	var items []Item
-	for _, wt := range data.worktrees {
-		projectHasWorktree[wt.project] = true
+	for _, ws := range spaces {
+		projectHasWorktree[ws.Ref.Project] = true
 
-		cloneDir := data.cloneDirs[wt.project]
-		isMain := cloneDir == wt.path
-		defaultBranch := data.defaultBranches[wt.project]
-
-		identity := semconv.WorktreeIdentityBranch(wt.path, cloneDir, defaultBranch, wt.branch)
-		sessionName := semconv.SessionName(data.profile, wt.project, identity)
-
-		// Determine whether HEAD has diverged from the identity branch.
-		identityFlat := semconv.FlattenBranch(identity)
-		displayBranch := wt.branch
-		headHint := ""
-		switch {
-		case wt.detached:
-			headHint = "detached"
-		case wt.branch != "" && semconv.FlattenBranch(wt.branch) != identityFlat:
-			headHint = "on " + wt.branch
-		}
-		if headHint != "" {
-			// Diverged: prefer the session's recorded raw branch, then config
-			// (clone dir), then the folder name.
-			if raw := data.sessionBranch[sessionName]; raw != "" {
-				displayBranch = raw
-			} else if isMain && defaultBranch != "" {
-				displayBranch = defaultBranch
-			} else {
-				displayBranch = identityFlat
-			}
-		}
-
-		shellID := data.shellSessions[sessionName]
 		item := Item{
-			Project:        wt.project,
-			Branch:         displayBranch,
-			Path:           wt.path,
-			HasShell:       shellID != "",
-			ShellSessionID: shellID,
-			IsMain:         isMain,
-			HeadHint:       headHint,
+			Ref:      ws.Ref,
+			Project:  ws.Ref.Project,
+			Branch:   ws.DisplayBranch,
+			Path:     ws.Path,
+			IsMain:   ws.IsMain,
+			HeadHint: ws.HeadHint,
+			HasShell: ws.Shell != nil,
 		}
-
-		if agent, ok := data.agentSessions[sessionName]; ok {
+		if ws.Shell != nil {
+			item.ShellSessionID = ws.Shell.ID
+		}
+		if ws.Agent != nil {
 			item.Group = groupAgent
 			item.HasAgent = true
-			item.AgentStatus = agent.status
-			item.AgentSessionID = agent.sessionID
-			item.Annotation = agent.annotation
+			item.AgentStatus = string(ws.Agent.Status)
+			item.AgentSessionID = ws.Agent.ID
+			item.Annotation = ws.Agent.Annotation
 		} else {
 			item.Group = groupWorktree
 		}
@@ -131,15 +84,23 @@ func buildItems(data refreshResult) []list.Item {
 		items = append(items, item)
 	}
 
-	for _, p := range data.projects {
-		if projectHasWorktree[p.name] {
-			continue
+	// Project rows: every configured project without a worktree. herd.List
+	// skips uncloned projects, so ask the herd directly for the full set.
+	if hrd != nil {
+		for _, p := range hrd.Projects() {
+			if projectHasWorktree[p.Name] {
+				continue
+			}
+			cloned := false
+			if got, err := hrd.Project(p.Name); err == nil {
+				cloned = got.Cloned
+			}
+			items = append(items, Item{
+				Project: p.Name,
+				Group:   groupProject,
+				Cloned:  cloned,
+			})
 		}
-		items = append(items, Item{
-			Project: p.name,
-			Group:   groupProject,
-			Cloned:  p.cloned,
-		})
 	}
 
 	sort.Slice(items, func(i, j int) bool {

@@ -181,6 +181,17 @@ func TestClient_ListSessions_missingBranchIsEmpty(t *testing.T) {
 	}
 }
 
+func TestListSessions_parsesProject(t *testing.T) {
+	r := &mockRunner{stdout: "$1\twork-myapp-feat\twork-myapp-feat\tagent\trunning\t\t\twork\tfeat\tmyapp"}
+	got, err := tmux.NewClient(r).ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(got) != 1 || got[0].Project != "myapp" {
+		t.Errorf("Project = %q, want %q", got[0].Project, "myapp")
+	}
+}
+
 func TestClient_ListSessions_prefixedAndShell(t *testing.T) {
 	lines := "$2\t⚡ myapp-feat\tmyapp-feat\tagent\twaiting\tneed input\t\n" +
 		"$3\tmyapp-feat~sh\tmyapp-feat\tshell\t\t\t\n"

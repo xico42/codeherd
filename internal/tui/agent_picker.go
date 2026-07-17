@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -8,29 +9,20 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/hooks"
-	projectpkg "github.com/xico42/codeherd/internal/project"
-	"github.com/xico42/codeherd/internal/session"
-	"github.com/xico42/codeherd/internal/tmux"
-	"github.com/xico42/codeherd/internal/worktree"
+	"github.com/xico42/codeherd/internal/herd"
 )
 
-// agentPickerPending holds the context needed to start a session after agent selection.
+// agentPickerPending holds the context needed to start a session after agent
+// selection: the identity Ref to operate on and the herd to operate through.
 type agentPickerPending struct {
-	project    string
-	branch     string
-	path       string // non-empty for groupWorktree
-	projCfg    config.ProjectConfig
-	cfg        *config.Config
-	tmuxClient *tmux.Client
-	profile    string // active profile at the time of picker open, "" when disabled
+	ref  herd.Ref
+	herd *herd.Herd
 }
 
 // agentPickerModel shows a compact list of named agents.
 type agentPickerModel struct {
 	names   []string
 	cursor  int
-	cfg     *config.Config
 	pending *agentPickerPending
 }
 
@@ -46,7 +38,6 @@ func newAgentPicker(cfg *config.Config, defaultAgent string, pending *agentPicke
 	return &agentPickerModel{
 		names:   names,
 		cursor:  cursor,
-		cfg:     cfg,
 		pending: pending,
 	}
 }
@@ -80,50 +71,20 @@ func (p *agentPickerModel) Update(msg tea.Msg) (*agentPickerModel, tea.Cmd) {
 
 func (p *agentPickerModel) submit() tea.Cmd {
 	name := p.selected()
-	agent, err := p.cfg.AgentByName(name)
-	if err != nil {
-		return func() tea.Msg { return errMsg{err: err} }
+	if name == "" {
+		return func() tea.Msg { return errMsg{err: fmt.Errorf("no agent selected")} }
 	}
-
 	pending := p.pending
-	agentCmd := agent.Command()
-	cfg := p.cfg
 
 	return func() tea.Msg {
-		path := pending.path
-		h := hooks.New(pending.projCfg.Hooks)
-
-		// If no path, need to clone + create worktree.
-		if path == "" {
-			projSvc := projectpkg.NewService(cfg, projectpkg.NewRealGitRunner(), h)
-			_ = projSvc.Clone(pending.project)
-
-			wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), pending.tmuxClient, h)
-			result, err := wtSvc.New(pending.project, pending.branch)
-			if err != nil {
-				return errMsg{err: err}
-			}
-			path = result.Path
-
-			if err := runFileCopyAndTemplate(cfg, pending.projCfg, h, pending.project, pending.branch, path); err != nil {
-				return errMsg{err: err}
-			}
+		if _, err := pending.herd.EnsureWorkspace(pending.ref, herd.EnsureOpts{AutoClone: true, Provision: true}); err != nil && !errors.Is(err, herd.ErrWorktreeExists) {
+			return errMsg{err: err}
 		}
-
-		sesSvc := session.NewService(pending.tmuxClient, h)
-		sessionID, err := sesSvc.Start(session.StartRequest{
-			Project:  pending.project,
-			Branch:   pending.branch,
-			Path:     path,
-			CloneDir: projectCloneDir(cfg, pending.projCfg),
-			Cmd:      agentCmd,
-			Env:      agent.Env,
-			Profile:  pending.profile,
-		})
+		handle, err := pending.herd.Launch(pending.ref, herd.LaunchOpts{Agent: name})
 		if err != nil {
 			return errMsg{err: err}
 		}
-		return attachMsg{session: sessionID}
+		return attachMsg{session: handle.ID}
 	}
 }
 

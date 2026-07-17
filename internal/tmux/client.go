@@ -17,6 +17,12 @@ type SessionRecord struct {
 	StartedAt     string // @codeherd_started_at (raw RFC3339 string)
 	Profile       string // @codeherd_profile, "" when unset
 	Branch        string // @codeherd_branch — raw branch the session was created for, "" when unset
+	// Project is @codeherd_project — the project the session belongs to, ""
+	// when unset. Sessions started before this option existed have no value
+	// here; internal/herd recovers the project from the frozen canonical name
+	// and re-stamps it on first observation (see herd.resolveProject), so such
+	// a record heals to first-class rather than being orphaned.
+	Project string
 }
 
 // Client provides typed tmux operations built on a Runner.
@@ -226,7 +232,7 @@ func (c *Client) CurrentSession() (string, error) {
 // ListSessions returns a SessionRecord for every active tmux session.
 // Returns nil (no error) when no sessions exist (tmux exits 1 in that case).
 func (c *Client) ListSessions() ([]SessionRecord, error) {
-	format := "#{session_id}\t#{session_name}\t#{@codeherd_canonical_name}\t#{@codeherd_session_type}\t#{@codeherd_status}\t#{@codeherd_annotation}\t#{@codeherd_started_at}\t#{@codeherd_profile}\t#{@codeherd_branch}"
+	format := "#{session_id}\t#{session_name}\t#{@codeherd_canonical_name}\t#{@codeherd_session_type}\t#{@codeherd_status}\t#{@codeherd_annotation}\t#{@codeherd_started_at}\t#{@codeherd_profile}\t#{@codeherd_branch}\t#{@codeherd_project}"
 	stdout, stderr, code, err := c.runner.Run("list-sessions", "-F", format)
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-sessions: %w", err)
@@ -242,8 +248,8 @@ func (c *Client) ListSessions() ([]SessionRecord, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "\t", 9)
-		for len(fields) < 9 {
+		fields := strings.SplitN(line, "\t", 10)
+		for len(fields) < 10 {
 			fields = append(fields, "")
 		}
 		records = append(records, SessionRecord{
@@ -256,6 +262,7 @@ func (c *Client) ListSessions() ([]SessionRecord, error) {
 			StartedAt:     fields[6],
 			Profile:       fields[7],
 			Branch:        fields[8],
+			Project:       fields[9],
 		})
 	}
 	return records, nil

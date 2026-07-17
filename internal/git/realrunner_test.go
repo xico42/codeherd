@@ -1,4 +1,4 @@
-package worktree
+package git
 
 import (
 	"os"
@@ -56,7 +56,7 @@ func realRunnerRepos(t *testing.T) string {
 
 func TestRealWorktreeRunner_RemotesAndBranches(t *testing.T) {
 	clone := realRunnerRepos(t)
-	r := NewRealWorktreeRunner()
+	r := NewRealRunner()
 
 	remotes, err := r.Remotes(clone)
 	if err != nil {
@@ -81,7 +81,7 @@ func TestRealWorktreeRunner_RemotesAndBranches(t *testing.T) {
 
 func TestRealWorktreeRunner_HasLocalBranch(t *testing.T) {
 	clone := realRunnerRepos(t)
-	r := NewRealWorktreeRunner()
+	r := NewRealRunner()
 
 	has, err := r.HasLocalBranch(clone, "main")
 	if err != nil || !has {
@@ -95,7 +95,7 @@ func TestRealWorktreeRunner_HasLocalBranch(t *testing.T) {
 
 func TestRealWorktreeRunner_FetchAndFastForward(t *testing.T) {
 	clone := realRunnerRepos(t)
-	r := NewRealWorktreeRunner()
+	r := NewRealRunner()
 
 	if err := r.Fetch(clone, "origin", "feat-x"); err != nil {
 		t.Errorf("Fetch: %v", err)
@@ -114,7 +114,7 @@ func TestRealWorktreeRunner_FetchAndFastForward(t *testing.T) {
 
 func TestRealWorktreeRunner_AddTrackingAndList(t *testing.T) {
 	clone := realRunnerRepos(t)
-	r := NewRealWorktreeRunner()
+	r := NewRealRunner()
 
 	if err := r.Fetch(clone, "origin", "feat-x"); err != nil {
 		t.Fatalf("Fetch: %v", err)
@@ -144,7 +144,7 @@ func TestRealWorktreeRunner_AddTrackingAndList(t *testing.T) {
 
 func TestRealWorktreeRunner_AddNewBranchFromAndRemove(t *testing.T) {
 	clone := realRunnerRepos(t)
-	r := NewRealWorktreeRunner()
+	r := NewRealRunner()
 
 	wtPath := filepath.Join(filepath.Dir(clone), "wt-new")
 	if err := r.AddNewBranchFrom(clone, wtPath, "new-branch", "main"); err != nil {
@@ -166,12 +166,30 @@ func TestRealWorktreeRunner_AddNewBranchFromAndRemove(t *testing.T) {
 
 func TestRealWorktreeRunner_AddExistingBranch(t *testing.T) {
 	clone := realRunnerRepos(t)
-	r := NewRealWorktreeRunner()
+	r := NewRealRunner()
 
 	// Create a local branch to check out into a worktree via Add.
 	runGit(t, clone, "branch", "local-x", "main")
 	wtPath := filepath.Join(filepath.Dir(clone), "wt-local-x")
 	if err := r.Add(clone, wtPath, "local-x"); err != nil {
 		t.Errorf("Add: %v", err)
+	}
+}
+
+func TestRealRunner_Clone(t *testing.T) {
+	src := t.TempDir()
+	runGit(t, src, "init", "-b", "main", ".")
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, src, "add", ".")
+	runGit(t, src, "commit", "-m", "init")
+
+	dst := filepath.Join(t.TempDir(), "clone")
+	if err := NewRealRunner().Clone(src, dst, "main"); err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "f.txt")); err != nil {
+		t.Errorf("cloned tree missing f.txt: %v", err)
 	}
 }

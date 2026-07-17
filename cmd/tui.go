@@ -7,12 +7,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/xico42/codeherd/internal/hooks"
-	"github.com/xico42/codeherd/internal/project"
 	"github.com/xico42/codeherd/internal/semconv"
 	"github.com/xico42/codeherd/internal/tmux"
 	"github.com/xico42/codeherd/internal/tui"
-	"github.com/xico42/codeherd/internal/worktree"
 )
 
 func runTUI(cmd *cobra.Command) error {
@@ -117,12 +114,8 @@ func respawnIfDead(tmuxClient *tmux.Client, sessionName string) error {
 }
 
 func runTUIDirect(tmuxClient *tmux.Client) error {
-	wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, &hooks.NoOp{})
-	sesSvc := newSessionService()
-	projSvc := project.NewService(cfg, project.NewRealGitRunner(), &hooks.NoOp{})
-
 	insideTmux := os.Getenv("TMUX") != ""
-	m := tui.NewModel(cfg, wtSvc, sesSvc, projSvc, tmuxClient, insideTmux, registry)
+	m := tui.NewModel(h, tmuxClient, insideTmux)
 	p := tea.NewProgram(m)
 
 	finalModel, err := p.Run()

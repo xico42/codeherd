@@ -4,14 +4,12 @@ import (
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/tmux"
-	"github.com/xico42/codeherd/internal/worktree"
+	"github.com/xico42/codeherd/internal/herd"
 )
 
 // remoteBranchItem adapts a RemoteBranch to the bubbles list.Item interface.
 type remoteBranchItem struct {
-	rb worktree.RemoteBranch
+	rb herd.RemoteBranch
 }
 
 func (i remoteBranchItem) FilterValue() string { return i.rb.Ref }
@@ -20,28 +18,24 @@ func (i remoteBranchItem) Description() string { return "" }
 
 // remotePickerModel shows a filterable list of remote-tracking branches.
 type remotePickerModel struct {
-	list       list.Model
-	project    string
-	errText    string
-	cfg        *config.Config
-	tmuxClient *tmux.Client
+	list    list.Model
+	project string
+	errText string
 }
 
-func newRemotePicker(project string, cfg *config.Config, tmuxClient *tmux.Client) *remotePickerModel {
+func newRemotePicker(project string) *remotePickerModel {
 	l := list.New(nil, list.NewDefaultDelegate(), maxWidth, 20)
 	l.Title = "Remote branches"
 	l.SetShowHelp(false)
 	l.SetFilteringEnabled(true)
 	l.DisableQuitKeybindings()
 	return &remotePickerModel{
-		list:       l,
-		project:    project,
-		cfg:        cfg,
-		tmuxClient: tmuxClient,
+		list:    l,
+		project: project,
 	}
 }
 
-func (p *remotePickerModel) setBranches(branches []worktree.RemoteBranch) {
+func (p *remotePickerModel) setBranches(branches []herd.RemoteBranch) {
 	items := make([]list.Item, len(branches))
 	for i, b := range branches {
 		items[i] = remoteBranchItem{rb: b}
@@ -49,10 +43,10 @@ func (p *remotePickerModel) setBranches(branches []worktree.RemoteBranch) {
 	p.list.SetItems(items)
 }
 
-func (p *remotePickerModel) selected() (worktree.RemoteBranch, bool) {
+func (p *remotePickerModel) selected() (herd.RemoteBranch, bool) {
 	it, ok := p.list.SelectedItem().(remoteBranchItem)
 	if !ok {
-		return worktree.RemoteBranch{}, false
+		return herd.RemoteBranch{}, false
 	}
 	return it.rb, true
 }

@@ -3,13 +3,12 @@ package tui
 import (
 	"testing"
 
-	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/worktree"
+	"github.com/xico42/codeherd/internal/herd"
 )
 
 func TestRemotePicker_setAndSelect(t *testing.T) {
-	p := newRemotePicker("myapp", &config.Config{}, nil)
-	p.setBranches([]worktree.RemoteBranch{
+	p := newRemotePicker("myapp")
+	p.setBranches([]herd.RemoteBranch{
 		{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"},
 		{Remote: "origin", Branch: "fix-y", Ref: "origin/fix-y"},
 	})
@@ -20,7 +19,7 @@ func TestRemotePicker_setAndSelect(t *testing.T) {
 }
 
 func TestRemotePicker_emptySelectNone(t *testing.T) {
-	p := newRemotePicker("myapp", &config.Config{}, nil)
+	p := newRemotePicker("myapp")
 	p.setBranches(nil)
 	if _, ok := p.selected(); ok {
 		t.Error("expected no selection on empty picker")
@@ -28,10 +27,10 @@ func TestRemotePicker_emptySelectNone(t *testing.T) {
 }
 
 func TestRemoteBranchesMsg_populatesPicker(t *testing.T) {
-	m := Model{screen: screenRemotePicker, remotePicker: newRemotePicker("myapp", &config.Config{}, nil)}
+	m := Model{screen: screenRemotePicker, remotePicker: newRemotePicker("myapp")}
 	updated, _ := m.Update(remoteBranchesMsg{
 		project:  "myapp",
-		branches: []worktree.RemoteBranch{{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"}},
+		branches: []herd.RemoteBranch{{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"}},
 	})
 	mm := updated.(Model)
 	if got := len(mm.remotePicker.list.Items()); got != 1 {

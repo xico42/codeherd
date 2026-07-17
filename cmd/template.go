@@ -69,18 +69,18 @@ func (c *TemplateCmd) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	projCfg := cfg.Projects[project]
-	h := hooks.New(projCfg.Hooks)
+	hook := hooks.New(projCfg.Hooks)
 
 	if !c.DryRun {
 		fmt.Fprintf(cmd.OutOrStdout(), "Processing templates...  ")
 	}
 
-	tmplSvc := herdtemplate.New(h)
+	tmplSvc := herdtemplate.New(hook)
 	result, err := tmplSvc.Process(herdtemplate.ProcessContext{
 		Project:      project,
 		Branch:       branch,
 		WorktreePath: absDir,
-		SessionName:  semconv.SessionName("", project, branch),
+		SessionName:  h.Ref(project, branch).CanonicalName(),
 		DryRun:       c.DryRun,
 	}, map[string]string{
 		semconv.HookAttrProject:      project,

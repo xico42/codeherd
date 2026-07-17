@@ -8,10 +8,7 @@ import (
 	"charm.land/huh/v2"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/hooks"
-	projectpkg "github.com/xico42/codeherd/internal/project"
-	"github.com/xico42/codeherd/internal/tmux"
-	"github.com/xico42/codeherd/internal/worktree"
+	"github.com/xico42/codeherd/internal/herd"
 )
 
 type formModel struct {
@@ -27,9 +24,8 @@ type formModel struct {
 	baseBranch string
 	tracksRef  string
 
-	// Dependencies for creating per-project services
-	cfg        *config.Config
-	tmuxClient *tmux.Client
+	// herd is the domain the form creates the worktree through.
+	herd *herd.Herd
 }
 
 type formContext struct {
@@ -39,13 +35,12 @@ type formContext struct {
 	branch     string // optional pre-fill for the branch input
 }
 
-func newFormModel(ctx formContext, cfg *config.Config, tmuxClient *tmux.Client) *formModel {
+func newFormModel(ctx formContext, cfg *config.Config, hrd *herd.Herd) *formModel {
 	m := &formModel{
 		project:    ctx.project,
 		baseBranch: ctx.baseBranch,
 		attach:     true,
-		cfg:        cfg,
-		tmuxClient: tmuxClient,
+		herd:       hrd,
 	}
 
 	m.tracksRef = ctx.tracksRef
@@ -129,36 +124,27 @@ func (f *formModel) submit() tea.Cmd {
 	tracksRef := f.tracksRef
 	attach := f.attach
 	agent := f.agent
-	cfg := f.cfg
-	tmuxClient := f.tmuxClient
-	projCfg := cfg.Projects[project]
+	hrd := f.herd
 
 	return func() tea.Msg {
-		h := hooks.New(projCfg.Hooks)
-		projSvc := projectpkg.NewService(cfg, projectpkg.NewRealGitRunner(), h)
-		_ = projSvc.Clone(project)
-
-		wtSvc := worktree.NewService(cfg, worktree.NewRealWorktreeRunner(), tmuxClient, h)
-		var result worktree.NewResult
-		var err error
-		switch {
-		case tracksRef != "":
-			result, err = wtSvc.NewTracking(project, branch, tracksRef)
-		case baseBranch != "":
-			result, err = wtSvc.NewFrom(project, branch, baseBranch)
-		default:
-			result, err = wtSvc.New(project, branch)
-		}
+		// Provision here (not only on the attach path): a non-attach create
+		// used to skip file copy + templates entirely. startSessionAfterCreate
+		// no longer provisions, so this runs the templates exactly once.
+		ws, err := hrd.EnsureWorkspace(hrd.Ref(project, branch), herd.EnsureOpts{
+			AutoClone:  true,
+			Provision:  true,
+			StartPoint: baseBranch,
+			Track:      tracksRef,
+		})
 		if err != nil {
 			return errMsg{err: err}
 		}
 
 		return worktreeCreatedMsg{
-			project: project,
-			branch:  result.Branch,
-			path:    result.Path,
-			attach:  attach,
-			agent:   agent,
+			ref:    ws.Ref,
+			path:   ws.Path,
+			attach: attach,
+			agent:  agent,
 		}
 	}
 }
@@ -191,7 +177,7 @@ func (m Model) showForm() (tea.Model, tea.Cmd) {
 		ctx.baseBranch = sel.Branch
 	}
 
-	m.form = newFormModel(ctx, m.cfg, m.tmuxClient)
+	m.form = newFormModel(ctx, m.cfg, m.herd)
 	m.screen = screenForm
 	return m, m.form.Init()
 }

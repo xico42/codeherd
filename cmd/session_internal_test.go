@@ -10,9 +10,8 @@ import (
 	"testing"
 
 	"github.com/xico42/codeherd/internal/config"
-	"github.com/xico42/codeherd/internal/hooks"
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/semconv"
-	"github.com/xico42/codeherd/internal/session"
 	"github.com/xico42/codeherd/internal/tmux"
 )
 
@@ -24,74 +23,35 @@ func setTestConfig(t *testing.T, c *config.Config) {
 	t.Cleanup(func() { cfg = orig })
 }
 
-func TestResolveAgentName_flagTakesPrecedence(t *testing.T) {
-	setTestConfig(t, &config.Config{
-		Defaults: config.DefaultsConfig{Agent: "default-agent"},
-		Agents: map[string]config.AgentConfig{
-			"default-agent": {Cmd: "default"},
-			"flag-agent":    {Cmd: "flag"},
-		},
-	})
-	name, err := resolveAgentName("flag-agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "flag-agent" {
-		t.Errorf("resolveAgentName = %q, want flag-agent", name)
-	}
+// setHerdTmux points the package-level Herd at the given tmux runner and keeps
+// the package cfg in sync (production builds both from one config load).
+// Session commands go through h; there is no service seam to override any more.
+func setHerdTmux(t *testing.T, c *config.Config, r tmux.Runner) {
+	t.Helper()
+	setTestConfig(t, c)
+	orig := h
+	h = herd.New(c, registry, herd.Deps{Tmux: r})
+	t.Cleanup(func() { h = orig })
 }
 
-func TestResolveAgentName_fallsBackToDefault(t *testing.T) {
-	setTestConfig(t, &config.Config{
-		Defaults: config.DefaultsConfig{Agent: "my-default"},
-		Agents: map[string]config.AgentConfig{
-			"my-default": {Cmd: "claude"},
-		},
-	})
-	name, err := resolveAgentName("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "my-default" {
-		t.Errorf("resolveAgentName = %q, want my-default", name)
-	}
-}
-
-func TestResolveAgentName_errorWhenNoneSet(t *testing.T) {
-	setTestConfig(t, &config.Config{})
-	_, err := resolveAgentName("")
-	if err == nil {
-		t.Error("resolveAgentName should error when no agent specified and no default")
-	}
+// sessionLine builds a tmux list-sessions record in the 10-field tab format
+// ListSessions parses: id, name, canonical, type, status, annotation,
+// started_at, profile, branch, project. The branch and project fields are what
+// let h.Resolve rebuild a matching Ref.
+func sessionLine(id, project, branch, stype, status string) string {
+	canonical := semconv.SessionName("", project, branch)
+	return strings.Join([]string{
+		id, canonical, canonical, stype, status, "", "", "", branch, project,
+	}, "\t") + "\n"
 }
 
 func TestSessionTypeFromFlag(t *testing.T) {
-	if got := sessionTypeFromFlag(true); got != semconv.SessionTypeShell {
-		t.Errorf("sessionTypeFromFlag(true) = %q, want %q", got, semconv.SessionTypeShell)
+	if got := sessionTypeFromFlag(true); got != herd.SessionTypeShell {
+		t.Errorf("sessionTypeFromFlag(true) = %q, want %q", got, herd.SessionTypeShell)
 	}
-	if got := sessionTypeFromFlag(false); got != semconv.SessionTypeAgent {
-		t.Errorf("sessionTypeFromFlag(false) = %q, want %q", got, semconv.SessionTypeAgent)
+	if got := sessionTypeFromFlag(false); got != herd.SessionTypeAgent {
+		t.Errorf("sessionTypeFromFlag(false) = %q, want %q", got, herd.SessionTypeAgent)
 	}
-}
-
-// listSessionsResponse formats a fake tmux list-sessions output that the session
-// service can parse. Fields: session_id, name, canonical_name, session_type,
-// status, annotation, started_at.
-func listSessionsResponse(id, name, canonical, stype, status string) string {
-	return fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t\t\n", id, name, canonical, stype, status)
-}
-
-// newTestSessionService creates a session.Service backed by the given mock runner.
-func newTestSessionService(r tmux.Runner) *session.Service {
-	return session.NewService(tmux.NewClient(r), &hooks.NoOp{})
-}
-
-// overrideSessionService replaces newSessionService for the duration of the test.
-func overrideSessionService(t *testing.T, svc *session.Service) {
-	t.Helper()
-	orig := newSessionService
-	newSessionService = func() *session.Service { return svc }
-	t.Cleanup(func() { newSessionService = orig })
 }
 
 // failWriter is an io.Writer that always returns an error, used to test
@@ -107,11 +67,10 @@ func (failWriter) Write([]byte) (int, error) {
 func TestListSession_flushError(t *testing.T) {
 	r := &multiMockRunner{
 		responses: []mockResponse{
-			{stdout: listSessionsResponse("$1", "myapp-feat", "myapp-feat", "agent", "running"), exitCode: 0},
+			{stdout: sessionLine("$1", "myapp", "feat", "agent", "running"), exitCode: 0},
 		},
 	}
-	svc := newTestSessionService(r)
-	overrideSessionService(t, svc)
+	setHerdTmux(t, &config.Config{}, r)
 
 	c := &ListSessionCmd{}
 	cobraCmd := c.Cobra()
@@ -128,11 +87,10 @@ func TestListSession_flushError(t *testing.T) {
 func TestShowSession_flushError(t *testing.T) {
 	r := &multiMockRunner{
 		responses: []mockResponse{
-			{stdout: listSessionsResponse("$1", "myapp-feat", "myapp-feat", "agent", "running"), exitCode: 0},
+			{stdout: sessionLine("$1", "myapp", "feat", "agent", "running"), exitCode: 0},
 		},
 	}
-	svc := newTestSessionService(r)
-	overrideSessionService(t, svc)
+	setHerdTmux(t, &config.Config{}, r)
 
 	c := &ShowSessionCmd{}
 	cobraCmd := c.Cobra()
@@ -149,12 +107,10 @@ func TestShowSession_flushError(t *testing.T) {
 func TestShowSession_outputsSessionInfo(t *testing.T) {
 	r := &multiMockRunner{
 		responses: []mockResponse{
-			// list-sessions response for svc.Show
-			{stdout: listSessionsResponse("$42", "myapp-feat", "myapp-feat", "agent", "running"), exitCode: 0},
+			{stdout: sessionLine("$42", "myapp", "feat", "agent", "running"), exitCode: 0},
 		},
 	}
-	svc := newTestSessionService(r)
-	overrideSessionService(t, svc)
+	setHerdTmux(t, &config.Config{}, r)
 
 	c := &ShowSessionCmd{}
 	cobraCmd := c.Cobra()
@@ -183,12 +139,10 @@ func TestDeleteSession_promptAbort(t *testing.T) {
 	// Return a running session so the prompt fires.
 	r := &multiMockRunner{
 		responses: []mockResponse{
-			// list-sessions for svc.Show (inside !Force branch)
-			{stdout: listSessionsResponse("$10", "myapp-feat", "myapp-feat", "agent", "running"), exitCode: 0},
+			{stdout: sessionLine("$10", "myapp", "feat", "agent", "running"), exitCode: 0},
 		},
 	}
-	svc := newTestSessionService(r)
-	overrideSessionService(t, svc)
+	setHerdTmux(t, &config.Config{}, r)
 
 	c := &DeleteSessionCmd{}
 	cobraCmd := c.Cobra()
@@ -213,23 +167,21 @@ func TestDeleteSession_promptAbort(t *testing.T) {
 	}
 }
 
-// TestDeleteSession_promptConfirm_stop verifies that DeleteSessionCmd.Run
-// proceeds to svc.Stop when the user confirms with "y". It expects Stop to
-// return ErrSessionNotFound (because list-sessions is called again in Stop),
-// so we supply a second list-sessions response.
+// TestDeleteSession_promptConfirm_callsStop verifies that DeleteSessionCmd.Run
+// proceeds to StopSessions when the user confirms with "y", killing the session
+// by its stable tmux ID.
 func TestDeleteSession_promptConfirm_callsStop(t *testing.T) {
 	r := &multiMockRunner{
 		responses: []mockResponse{
-			// list-sessions for svc.Show
-			{stdout: listSessionsResponse("$10", "myapp-feat", "myapp-feat", "agent", "running"), exitCode: 0},
-			// list-sessions for svc.Stop
-			{stdout: listSessionsResponse("$10", "myapp-feat", "myapp-feat", "agent", "running"), exitCode: 0},
+			// list-sessions for h.Resolve (confirmation probe)
+			{stdout: sessionLine("$10", "myapp", "feat", "agent", "running"), exitCode: 0},
+			// list-sessions for h.StopSessions
+			{stdout: sessionLine("$10", "myapp", "feat", "agent", "running"), exitCode: 0},
 			// kill-session
 			{stdout: "", exitCode: 0},
 		},
 	}
-	svc := newTestSessionService(r)
-	overrideSessionService(t, svc)
+	setHerdTmux(t, &config.Config{}, r)
 
 	c := &DeleteSessionCmd{}
 	cobraCmd := c.Cobra()
@@ -252,29 +204,27 @@ func TestDeleteSession_promptConfirm_callsStop(t *testing.T) {
 		t.Errorf("output %q does not contain done", out.String())
 	}
 
-	// Verify kill-session was called.
-	var killCalled bool
+	// Verify kill-session was called by stable ID ($10).
+	var killedByID bool
 	for _, call := range r.calls {
-		if call[0] == "kill-session" {
-			killCalled = true
+		if call[0] == "kill-session" && call[len(call)-1] == "$10" {
+			killedByID = true
 		}
 	}
-	if !killCalled {
-		t.Error("expected kill-session call, not found")
+	if !killedByID {
+		t.Error("expected kill-session -t $10 (by stable ID), not found")
 	}
 }
 
 // TestAttachSession_callsExecTmuxAttach verifies that AttachSessionCmd.Run
-// calls execTmuxAttach with the session ID from Show.
+// calls execTmuxAttach with the session ID from Resolve.
 func TestAttachSession_callsExecTmuxAttach(t *testing.T) {
 	r := &multiMockRunner{
 		responses: []mockResponse{
-			// list-sessions for svc.Show — returns session with ID $42
-			{stdout: listSessionsResponse("$42", "myapp-feat", "myapp-feat", "agent", "running"), exitCode: 0},
+			{stdout: sessionLine("$42", "myapp", "feat", "agent", "running"), exitCode: 0},
 		},
 	}
-	svc := newTestSessionService(r)
-	overrideSessionService(t, svc)
+	setHerdTmux(t, &config.Config{}, r)
 
 	var attachedTo string
 	origExec := execTmuxAttach
@@ -298,10 +248,11 @@ func TestAttachSession_callsExecTmuxAttach(t *testing.T) {
 }
 
 // TestCreateSession_autoCreate_worktreeNotFound verifies that CreateSessionCmd
-// prints "Worktree ... not found, creating..." and calls wtSvc.New when the
-// worktree directory does not exist. The real git runner will fail (not a
-// git repo), which produces a non-sentinel error that flows through
-// worktreeErr's default branch and is returned (no os.Exit).
+// tries to create the worktree via EnsureWorkspace when it does not exist. The
+// real git runner will fail (not a git repo), which produces a non-sentinel
+// error that flows through worktreeErr's default branch and is returned (no
+// os.Exit). The "not found, creating...  done" banner now prints only on the
+// successful create path, so this failure case surfaces the git error instead.
 func TestCreateSession_autoCreate_worktreeNotFound(t *testing.T) {
 	// cloneDir exists (project is "cloned") but worktreePath does not.
 	projectsDir := t.TempDir()
@@ -326,26 +277,33 @@ func TestCreateSession_autoCreate_worktreeNotFound(t *testing.T) {
 
 	err := c.Run(cobraCmd, []string{"myapp", "feat"})
 	// Expect an error from git (not a real git repo), not from os.Exit.
-	// The error should NOT be nil since the worktree creation fails.
 	if err == nil {
 		t.Fatal("expected error from git worktree creation, got nil")
 	}
-
-	// The "creating..." message should appear in output.
-	if !strings.Contains(out.String(), "not found, creating") {
-		t.Errorf("output %q does not contain 'not found, creating'", out.String())
-	}
 }
 
-// TestCreateSession_agentPath_missingWorktree exercises the non-shell branch
-// to verify agent resolution errors are surfaced cleanly.
+// TestCreateSession_agent_noDefaultAgent exercises the agent branch to verify
+// agent-resolution errors surface. With the worktree already present, the
+// command reaches h.Launch, whose agent resolution fails when neither --agent
+// nor defaults.agent is set.
 func TestCreateSession_agent_noDefaultAgent(t *testing.T) {
-	setTestConfig(t, &config.Config{
-		Defaults: config.DefaultsConfig{},
+	projectsDir := t.TempDir()
+	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
+	worktreePath := filepath.Join(cloneDir+"__worktrees", "feat")
+	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: projectsDir}, // no default agent
 		Projects: map[string]config.ProjectConfig{
 			"myapp": {Repo: "git@github.com:user/myapp.git"},
 		},
-	})
+	}
+	setHerdTmux(t, cfg, &multiMockRunner{}) // empty runner: list-sessions returns no sessions
 
 	c := &CreateSessionCmd{} // Shell=false, no agent set
 	cobraCmd := c.Cobra()
@@ -362,17 +320,14 @@ func TestCreateSession_agent_noDefaultAgent(t *testing.T) {
 }
 
 // TestCreateSession_shell_existingWorktree verifies the shell path proceeds
-// past the worktree check and reaches the session start phase. The real tmux
-// runner is used; we expect a tmux-level error (session creation) rather than
-// a worktree error.
+// past the worktree check and reaches the session start phase against a real
+// (isolated) tmux server.
 func TestCreateSession_shell_existingWorktree(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
 	// Isolate tmux to a per-test socket so the test's transient session does
-	// not appear on the developer's outer tmux server. See useIsolatedTmux
-	// for the full rationale; we inline a smaller version here because that
-	// helper lives in package cmd_test and this test is package cmd.
+	// not appear on the developer's outer tmux server.
 	socket := filepath.Join(t.TempDir(), "tmux.sock")
 	t.Setenv(tmux.SocketEnvVar, socket)
 	t.Setenv("TMUX", "")
@@ -393,12 +348,13 @@ func TestCreateSession_shell_existingWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	setTestConfig(t, &config.Config{
+	cfg := &config.Config{
 		Defaults: config.DefaultsConfig{ProjectsDir: projectsDir},
 		Projects: map[string]config.ProjectConfig{
 			"myapp": {Repo: "git@github.com:user/myapp.git"},
 		},
-	})
+	}
+	setHerdTmux(t, cfg, tmux.NewRealRunner())
 
 	origExec := execTmuxAttach
 	t.Cleanup(func() { execTmuxAttach = origExec })
@@ -411,12 +367,7 @@ func TestCreateSession_shell_existingWorktree(t *testing.T) {
 	var out bytes.Buffer
 	cobraCmd.SetOut(&out)
 
-	// The tmux call may succeed (creates a real session) or fail with a
-	// non-sentinel error. Either way, we should reach the "Starting session..."
-	// print, confirming the worktree and agent-resolution paths were traversed.
 	runErr := c.Run(cobraCmd, []string{"myapp", "feat"})
-	// The per-test tmux server tear-down in t.Cleanup will remove any
-	// session created above; no explicit kill-session needed.
 
 	if !strings.Contains(out.String(), "Starting session myapp-feat~sh") {
 		t.Errorf("output %q does not show shell session name (runErr=%v)", out.String(), runErr)

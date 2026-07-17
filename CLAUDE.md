@@ -22,7 +22,7 @@ make clean           # remove local binary
 Run a single package's tests:
 ```bash
 go test ./internal/config/...
-go test ./internal/session/...
+go test ./internal/herd/...
 # etc.
 ```
 
@@ -66,9 +66,8 @@ All commands run locally — they execute git/tmux/filesystem directly on whatev
 - **`cmd/errors.go`** — error-printer helpers for consistent CLI error formatting
 - **`cmd/tui.go`** — TUI launch machinery (extracted from root)
 - **`internal/config`** — TOML config at `~/.config/codeherd/config.toml`; `Load()` returns empty `Config` on missing file; holds `Defaults{ProjectsDir, Agent}`, `Projects`, `Agents`; `RepoPath()` derives filesystem paths from git URLs (e.g. `git@github.com:user/myapp.git` → `github.com/user/myapp`); `AgentByName()` / `AgentNames()` for named agent lookup
-- **`internal/session`** — tmux session lifecycle: start, stop, list, attach, show; `StartRequest.Type` and `SessionInfo.Type` unify agent and shell handling; `Service.Show`/`Stop` address by `(project, branch, sessionType)`; `SessionExistsError` carries `Project/Branch/Type`; `SetStatus` is agent-only; session state via tmux user-defined options
-- **`internal/worktree`** — git worktree operations: new, delete, list, shell, env
-- **`internal/project`** — project clone and directory management
+- **`internal/herd`** — the domain. Owns projects, worktrees, and sessions together, because they are one thing: a workspace. `Herd` holds `cfg` + the active profile + the exec-boundary runners; `Ref` is identity (always the *identity* branch, never the display branch) and always carries the profile. Obtain a `Ref` from `h.Ref(project, branch)` or `Workspace.Ref` — never build one by hand. Operations: `EnsureWorkspace`, `Launch`, `List`, `Resolve`, `StopSessions`, `Teardown`, `Clone`, `Provision`, `SetStatus`. One error vocabulary lives here.
+- **`internal/git`** — mechanism; `WorktreeRunner` + `CloneRunner` + `Runner` union, `RealRunner`, porcelain parsers. Never sees `cfg` or the profile.
 - **`internal/tmux`** — typed tmux command wrapper (`NewClient`, `Runner` interface for testing)
 - **`internal/tui`** — Bubble Tea v2 dashboard with session/worktree/project views
 - **`internal/herdtemplate`** — processes `.herd` template files with Go `text/template`; custom funcs: `port "name"` (deterministic FNV-1a hash), `env "VAR" "default"`; renders any `*.herd` file to its unsuffixed counterpart
@@ -85,9 +84,11 @@ All commands run locally — they execute git/tmux/filesystem directly on whatev
 
 - **Struct-per-command**: each CLI command is a struct with a `Cobra()` method; flags are exported fields on the struct; verb groupers are wired in `cmd/register.go`
 - **Named agents**: `[agents.<name>]` in config define cmd/args/env; selected via `--agent` flag or TUI picker; `AgentByName()` for lookup
-- **Session types**: agent (default) vs shell; both are first-class in `internal/session` via `StartRequest.Type` and `SessionInfo.Type`; `Show`/`Stop`/`delete session` accept `--shell` to target the shell type
+- **Session types**: agent (default) vs shell; both are first-class in `internal/herd` via the `SessionType` on `LaunchOpts` and `Handle`; `Resolve`/`StopSessions`/`delete session` accept `--shell` to target the shell type
 - **Session state in tmux**: session metadata stored as tmux user-defined options on sessions, not in state files
-- **Mocking via interfaces**: `internal/tmux` exposes `Runner`; `internal/worktree` exposes `WorktreeRunner` — tests use mock implementations
+- **Mocking via interfaces**: `internal/tmux` exposes `Runner` and `internal/git` exposes `Runner` (a `WorktreeRunner` + `CloneRunner` union) — tests fake at those two exec-boundary seams
+- **Domain vs mechanism**: needs `cfg`, the profile, or identity to decide something → `internal/herd`. Does not → a support package. This is why `filecopy` and `herdtemplate` stayed out: they never needed the profile, which is why they were never implicated in the profile bugs.
+- **Never build a `herd.Ref` by hand**: `h.Ref(project, branch)` supplies the profile; a literal `herd.Ref{Project: p, Branch: b}` is silently addressing the no-profile world. This is the convention that replaced `semconv.SessionName("", …)`, which failed nine times.
 - **Missing file = empty defaults**: `config.Load()` returns an empty `Config` (not an error) when the file doesn't exist
 - **`syscall.Exec` for interactive commands**: `attach session`, `create worktree --attach`, and related commands replace the process rather than spawning a child
 - **Local execution**: all session/project/worktree commands run git/tmux via `os/exec` on the local machine — no SSH indirection

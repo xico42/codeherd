@@ -1,10 +1,22 @@
 package cmd
 
 import (
+	"os"
 	"testing"
 
+	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/semconv"
 )
+
+// TestMain seeds a default Herd for the internal package-cmd tests that invoke
+// a command's Run directly, bypassing PersistentPreRunE (which constructs h in
+// production). Tests that need a specific config or tmux runner override h via
+// setHerdTmux (cmd/session_internal_test.go).
+func TestMain(m *testing.M) {
+	h = herd.New(&config.Config{}, nil, herd.Deps{})
+	os.Exit(m.Run())
+}
 
 func TestResolveProfileArg(t *testing.T) {
 	tests := []struct {

@@ -181,8 +181,8 @@ func (m Model) startDelete() (tea.Model, tea.Cmd) {
 		m.statusMsg = "cannot delete a project entry — select a worktree"
 		return m, nil
 	}
-	if sel.IsMain {
-		m.statusMsg = "cannot delete the main worktree"
+	if sel.IsMain && !sel.HasAgent && !sel.HasShell {
+		m.statusMsg = "main worktree has no sessions to delete"
 		return m, nil
 	}
 	m.confirm = newConfirmModel(*sel)
@@ -205,6 +205,8 @@ func (m Model) updateConfirmDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.confirmDeleteNo()
 		case deleteAll:
 			return m.confirmDeleteAll()
+		case deleteAllSessions:
+			return m.confirmDeleteAllSessions()
 		case deleteAgent:
 			return m.confirmDeleteAgent()
 		case deleteShell:
@@ -251,6 +253,19 @@ func (m Model) confirmDeleteShell() (tea.Model, tea.Cmd) {
 
 	return m, func() tea.Msg {
 		if _, err := hrd.StopSessions(ref, herd.StopOpts{Type: herd.SessionTypeShell}); err != nil {
+			return errMsg{err: err}
+		}
+		return m.refreshCmd()()
+	}
+}
+
+func (m Model) confirmDeleteAllSessions() (tea.Model, tea.Cmd) {
+	ref := m.confirm.target.Ref
+	hrd := m.herd
+	m.confirm, m.screen = nil, screenList
+
+	return m, func() tea.Msg {
+		if _, err := hrd.StopSessions(ref, herd.StopOpts{All: true}); err != nil {
 			return errMsg{err: err}
 		}
 		return m.refreshCmd()()

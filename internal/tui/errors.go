@@ -38,6 +38,8 @@ func humanize(err error) string {
 		return "Session is running — stop it first."
 	case errors.Is(err, herd.ErrPathNotFound):
 		return "Worktree path not found."
+	case errors.Is(err, herd.ErrMainWorktree):
+		return "Cannot delete the main worktree."
 	default:
 		return err.Error()
 	}

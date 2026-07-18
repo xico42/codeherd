@@ -331,6 +331,12 @@ func (h *Herd) Teardown(ref Ref, opts TeardownOpts) error {
 		return err
 	}
 
+	// The main worktree is the clone dir itself; removing it makes no sense.
+	// Refuse before stopping any session or touching git.
+	if wtPath == cloneDir {
+		return fmt.Errorf("%w: %s/%s", ErrMainWorktree, ref.Project, ref.Branch)
+	}
+
 	if !opts.Force {
 		running, err := h.handles()
 		if err != nil {

@@ -11,10 +11,11 @@ import (
 type deleteAction int
 
 const (
-	deleteAll    deleteAction = iota // worktree + all sessions
-	deleteAgent                      // agent session only
-	deleteShell                      // shell session only
-	deleteCancel                     // cancel
+	deleteAll         deleteAction = iota // worktree + all sessions
+	deleteAllSessions                     // all sessions, keep the worktree
+	deleteAgent                           // agent session only
+	deleteShell                           // shell session only
+	deleteCancel                          // cancel
 )
 
 type choice struct {
@@ -36,6 +37,19 @@ func newConfirmModel(target Item) *confirmModel {
 
 	// "Delete everything" label varies by what's active.
 	switch {
+	case target.IsMain:
+		// The main worktree is the clone dir itself — never offer to remove it.
+		// Only session kills are available here; startDelete guarantees at least
+		// one session is active before this menu opens.
+		if hasAgent && hasShell {
+			choices = append(choices, choice{"Delete all sessions", deleteAllSessions})
+		}
+		if hasAgent {
+			choices = append(choices, choice{"Delete agent session only", deleteAgent})
+		}
+		if hasShell {
+			choices = append(choices, choice{"Delete shell session only", deleteShell})
+		}
 	case hasAgent && hasShell:
 		choices = append(choices, choice{"Delete everything (worktree + all sessions)", deleteAll})
 		choices = append(choices, choice{"Delete agent session only", deleteAgent})

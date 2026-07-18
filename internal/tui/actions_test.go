@@ -64,7 +64,7 @@ func TestStartDelete_projectItem(t *testing.T) {
 	}
 }
 
-func TestStartDelete_mainWorktree(t *testing.T) {
+func TestStartDelete_mainWorktree_noSessions(t *testing.T) {
 	items := []Item{{Project: "myapp", Branch: "main", Group: groupWorktree, IsMain: true}}
 	listItems := make([]list.Item, len(items))
 	for i, it := range items {
@@ -76,13 +76,84 @@ func TestStartDelete_mainWorktree(t *testing.T) {
 	updated, _ := m.startDelete()
 	um := updated.(Model)
 	if um.screen != screenList {
-		t.Errorf("screen = %d, want %d (should stay on list for main worktree)", um.screen, screenList)
+		t.Errorf("screen = %d, want %d (no sessions — stay on list)", um.screen, screenList)
 	}
-	if um.statusMsg == "" {
-		t.Error("statusMsg should be set when trying to delete main worktree")
+	if !strings.Contains(um.statusMsg, "no sessions") {
+		t.Errorf("statusMsg = %q, should say there are no sessions to delete", um.statusMsg)
 	}
-	if !strings.Contains(um.statusMsg, "main worktree") {
-		t.Errorf("statusMsg = %q, should mention main worktree", um.statusMsg)
+}
+
+func TestStartDelete_mainWorktree_withSession(t *testing.T) {
+	items := []Item{{Project: "myapp", Branch: "main", Group: groupAgent, IsMain: true, HasAgent: true, AgentStatus: "running"}}
+	listItems := make([]list.Item, len(items))
+	for i, it := range items {
+		listItems[i] = it
+	}
+	m := Model{screen: screenList}
+	m.list = newList(listItems)
+
+	updated, _ := m.startDelete()
+	um := updated.(Model)
+	if um.screen != screenConfirmDelete {
+		t.Errorf("screen = %d, want %d (session present — open confirm menu)", um.screen, screenConfirmDelete)
+	}
+	if um.confirm == nil {
+		t.Fatal("confirm should be set for a main worktree with an active session")
+	}
+	for _, ch := range um.confirm.choices {
+		if ch.action == deleteAll {
+			t.Errorf("main worktree confirm offered deleteAll: %+v", um.confirm.choices)
+		}
+	}
+}
+
+func TestConfirmDeleteAllSessions_stopsBothKeepsWorktree(t *testing.T) {
+	runner := &recordingRunner{
+		sessions: strings.Join([]string{
+			sessionRowLine("$1", "myapp-main", "myapp-main", "agent", "", "main", "myapp"),
+			sessionRowLine("$2", "myapp-main~sh", "myapp-main", "shell", "", "main", "myapp"),
+		}, "\n"),
+	}
+	hrd := teardownHerd(t, runner, nil, "main")
+
+	m := Model{
+		herd:       hrd,
+		tmuxClient: tmux.NewClient(runner),
+		confirm: newConfirmModel(Item{
+			Ref:            herd.Ref{Project: "myapp", Branch: "main"},
+			Project:        "myapp",
+			Branch:         "main",
+			IsMain:         true,
+			AgentSessionID: "$1",
+			ShellSessionID: "$2",
+			HasAgent:       true,
+			HasShell:       true,
+		}),
+	}
+
+	updated, cmd := m.confirmDeleteAllSessions()
+	if cmd == nil {
+		t.Fatal("confirmDeleteAllSessions returned no command")
+	}
+	um := updated.(Model)
+	if um.screen != screenList {
+		t.Errorf("screen = %d, want %d after action", um.screen, screenList)
+	}
+	if um.confirm != nil {
+		t.Error("confirm should be cleared after the action")
+	}
+	cmd() // execute the stop closure
+
+	for _, want := range []string{"$1", "$2"} {
+		found := false
+		for _, got := range runner.killed {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("session %s was never killed; killed=%v", want, runner.killed)
+		}
 	}
 }
 
@@ -155,6 +226,54 @@ func TestNewConfirmModel_bothSessions(t *testing.T) {
 	}
 	if c.choices[3].action != deleteCancel {
 		t.Errorf("choices[3].action = %v, want deleteCancel", c.choices[3].action)
+	}
+}
+
+func TestNewConfirmModel_mainBothSessions(t *testing.T) {
+	target := Item{Project: "myapp", Branch: "main", Group: groupWorktree, IsMain: true, HasAgent: true, HasShell: true, AgentStatus: "running"}
+	c := newConfirmModel(target)
+	if len(c.choices) != 4 {
+		t.Fatalf("choices = %d, want 4 (all sessions + agent + shell + cancel)", len(c.choices))
+	}
+	want := []deleteAction{deleteAllSessions, deleteAgent, deleteShell, deleteCancel}
+	for i, w := range want {
+		if c.choices[i].action != w {
+			t.Errorf("choices[%d].action = %v, want %v", i, c.choices[i].action, w)
+		}
+	}
+	// The worktree must never be offered for deletion on the main worktree.
+	for _, ch := range c.choices {
+		if ch.action == deleteAll {
+			t.Errorf("main worktree menu offered deleteAll: %+v", c.choices)
+		}
+	}
+}
+
+func TestNewConfirmModel_mainAgentOnly(t *testing.T) {
+	target := Item{Project: "myapp", Branch: "main", Group: groupAgent, IsMain: true, HasAgent: true, AgentStatus: "running"}
+	c := newConfirmModel(target)
+	want := []deleteAction{deleteAgent, deleteCancel}
+	if len(c.choices) != len(want) {
+		t.Fatalf("choices = %d, want %d", len(c.choices), len(want))
+	}
+	for i, w := range want {
+		if c.choices[i].action != w {
+			t.Errorf("choices[%d].action = %v, want %v", i, c.choices[i].action, w)
+		}
+	}
+}
+
+func TestNewConfirmModel_mainShellOnly(t *testing.T) {
+	target := Item{Project: "myapp", Branch: "main", Group: groupWorktree, IsMain: true, HasShell: true}
+	c := newConfirmModel(target)
+	want := []deleteAction{deleteShell, deleteCancel}
+	if len(c.choices) != len(want) {
+		t.Fatalf("choices = %d, want %d", len(c.choices), len(want))
+	}
+	for i, w := range want {
+		if c.choices[i].action != w {
+			t.Errorf("choices[%d].action = %v, want %v", i, c.choices[i].action, w)
+		}
 	}
 }
 

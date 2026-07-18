@@ -19,6 +19,7 @@ var (
 	ErrSessionNotFound   = errors.New("session not found")
 	ErrSessionRunning    = errors.New("session is running")
 	ErrPathNotFound      = errors.New("worktree path not found")
+	ErrMainWorktree      = errors.New("cannot delete the main worktree")
 )
 
 // AlreadyClonedError carries the path that already exists.

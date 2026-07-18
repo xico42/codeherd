@@ -39,6 +39,8 @@ func herdErr(project, branch string, err error) error {
 				sesErr.Ref.Project, sesErr.Ref.Branch, sesErr.Type, sesErr.Ref.Project, sesErr.Ref.Branch)
 		}
 		return err
+	case errors.Is(err, herd.ErrMainWorktree):
+		return fmt.Errorf("cannot delete the main worktree %s/%s — delete its sessions with 'ch delete session %s <branch>'", project, branch, project)
 	default:
 		return err
 	}

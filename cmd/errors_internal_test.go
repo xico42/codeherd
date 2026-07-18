@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/xico42/codeherd/internal/herd"
@@ -48,6 +50,20 @@ func TestHerdErr_sessionExists_carriesRefFromTypedError(t *testing.T) {
 	want := "session myapp/feat (agent) already exists. Attach with 'ch attach session myapp feat'"
 	if got == nil || got.Error() != want {
 		t.Fatalf("herdErr() = %v, want %q", got, want)
+	}
+}
+
+func TestHerdErr_mainWorktree(t *testing.T) {
+	err := herdErr("myapp", "main", fmt.Errorf("%w: myapp/main", herd.ErrMainWorktree))
+	if err == nil {
+		t.Fatal("herdErr returned nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "main worktree") {
+		t.Errorf("message = %q, should mention the main worktree", msg)
+	}
+	if !strings.Contains(msg, "ch delete session") {
+		t.Errorf("message = %q, should point at 'ch delete session'", msg)
 	}
 }
 

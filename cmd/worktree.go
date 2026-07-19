@@ -41,11 +41,7 @@ func (c *ListWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 		if ws.Agent != nil {
 			sess = ws.Agent.Ref.CanonicalName() + " (running)"
 		}
-		branch := ws.DisplayBranch
-		if branch == "" {
-			branch = "(detached)"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", ws.Ref.Project, branch, ws.Path, sess)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", ws.Ref.Project, ws.BranchLabel(), ws.Path, sess)
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)

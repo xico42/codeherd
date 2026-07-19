@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/semconv"
 )
 
@@ -41,15 +42,12 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 
 	isSelected := index == m.Index()
 
-	// Line 1: project / branch (+ head-state hint when HEAD diverged)
-	var line1 string
-	if item.Branch != "" {
-		line1 = item.Project + " / " + item.Branch
-	} else {
-		line1 = item.Project
-	}
-	if item.HeadHint != "" {
-		line1 += " (" + item.HeadHint + ")"
+	// Line 1: project / branch (+ head-state hint when HEAD diverged). The label
+	// is formatted by the same herd.FormatBranchLabel the CLI uses, so both
+	// surfaces render a diverged or detached worktree identically.
+	line1 := item.Project
+	if label := herd.FormatBranchLabel(item.Branch, item.HeadHint); label != "" {
+		line1 += " / " + label
 	}
 
 	cursor := "  "

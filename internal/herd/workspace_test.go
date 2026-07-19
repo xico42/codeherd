@@ -503,6 +503,11 @@ func TestList_cloneDirDetachedUsesDefaultBranch(t *testing.T) {
 	if spaces[0].HeadHint != "detached" {
 		t.Errorf("HeadHint = %q, want detached", spaces[0].HeadHint)
 	}
+	// A detached clone dir still has an identity — the default branch — so the
+	// row stays labelled "main (detached)" rather than losing its branch.
+	if spaces[0].DisplayBranch != "main" {
+		t.Errorf("DisplayBranch = %q, want %q for a detached clone dir", spaces[0].DisplayBranch, "main")
+	}
 }
 
 func TestList_skipUncloned(t *testing.T) {
@@ -851,9 +856,47 @@ func TestList_underProfile_findsRunningSession(t *testing.T) {
 	}
 }
 
-// A diverged HEAD changes what we render, never what we address. This is the
-// other half of the shipped defect: Item.Branch held the display branch and
-// round-tripped into wtSvc.Delete.
+// The main worktree's row is labelled by its identity (the default branch),
+// not by whatever HEAD happens to sit on. When the clone dir has a non-default
+// branch checked out, DisplayBranch must stay "main" and HeadHint must carry
+// the actual checkout — otherwise "main" vanishes from every listing and the
+// main worktree becomes unspottable (the geomonitor bug).
+func TestList_mainWorktree_divergedHead_displayBranchIsIdentity(t *testing.T) {
+	tmpDir := t.TempDir()
+	g := &fakeGit{ListFn: func(string) ([]git.WorktreeInfo, error) {
+		return []git.WorktreeInfo{{Path: cloneDirPath(tmpDir), Branch: "docs/rbac-epic"}}, nil
+	}}
+	h, _ := workspaceHerdIn(t, tmpDir, g, &fakeTmux{})
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	spaces, err := h.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(spaces) != 1 {
+		t.Fatalf("expected 1 workspace, got %d", len(spaces))
+	}
+	if !spaces[0].IsMain {
+		t.Errorf("IsMain = false, want true for the clone dir")
+	}
+	if spaces[0].Ref.Branch != "main" {
+		t.Errorf("Ref.Branch = %q, want %q — identity is the default branch", spaces[0].Ref.Branch, "main")
+	}
+	if spaces[0].DisplayBranch != "main" {
+		t.Errorf("DisplayBranch = %q, want %q — the main row is labelled by its identity", spaces[0].DisplayBranch, "main")
+	}
+	if spaces[0].HeadHint != "on docs/rbac-epic" {
+		t.Errorf("HeadHint = %q, want %q", spaces[0].HeadHint, "on docs/rbac-epic")
+	}
+}
+
+// Addressing and display are separate. Ref stays the folder identity so
+// operations always land on the right worktree; display, for a non-main
+// worktree with no session, is git's live branch — the ground truth — with no
+// divergence hint, because the folder name is only an addressing key and there
+// is no recorded original branch to diverge from. (Row G′ of the settled table.)
 func TestList_divergedHead_refKeepsIdentityBranch(t *testing.T) {
 	dir := t.TempDir()
 	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
@@ -863,7 +906,8 @@ func TestList_divergedHead_refKeepsIdentityBranch(t *testing.T) {
 	}
 
 	g := &fakeGit{ListFn: func(string) ([]git.WorktreeInfo, error) {
-		// The worktree was created for "feat" but HEAD now sits on "other".
+		// The folder is "feat" but HEAD sits on "other" — with no session, we
+		// cannot know "feat" was ever the intended branch, so trust git.
 		return []git.WorktreeInfo{{Path: wtPath, Branch: "other"}}, nil
 	}}
 	cfg := &config.Config{
@@ -879,13 +923,201 @@ func TestList_divergedHead_refKeepsIdentityBranch(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	if spaces[0].Ref.Branch != "feat" {
-		t.Errorf("Ref.Branch = %q, want %q — identity must survive divergence", spaces[0].Ref.Branch, "feat")
+		t.Errorf("Ref.Branch = %q, want %q — identity must survive for addressing", spaces[0].Ref.Branch, "feat")
 	}
 	if spaces[0].DisplayBranch != "other" {
-		t.Errorf("DisplayBranch = %q, want %q", spaces[0].DisplayBranch, "other")
+		t.Errorf("DisplayBranch = %q, want %q — no session, so show git's live branch", spaces[0].DisplayBranch, "other")
+	}
+	if spaces[0].HeadHint != "" {
+		t.Errorf("HeadHint = %q, want empty — no recorded original to diverge from", spaces[0].HeadHint)
+	}
+}
+
+// The geomonitor chore-cron-rework row: a worktree whose directory name does
+// not match its branch, with no session. The folder name must never surface;
+// we show git's live branch, clean, exactly as v0.2.0's CLI did. (Row F.)
+func TestList_nonMainWorktree_dirNameMismatch_noSession_showsLiveBranch(t *testing.T) {
+	dir := t.TempDir()
+	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
+	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "chore-cron-rework")
+	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	g := &fakeGit{ListFn: func(string) ([]git.WorktreeInfo, error) {
+		return []git.WorktreeInfo{{Path: wtPath, Branch: "chore/restore-cron-rework"}}, nil
+	}}
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: dir},
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git", DefaultBranch: "main"},
+		},
+	}
+	h := New(cfg, nil, Deps{Tmux: &fakeTmux{}, Git: g})
+
+	spaces, err := h.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if spaces[0].DisplayBranch != "chore/restore-cron-rework" {
+		t.Errorf("DisplayBranch = %q, want the live branch %q", spaces[0].DisplayBranch, "chore/restore-cron-rework")
+	}
+	if spaces[0].HeadHint != "" {
+		t.Errorf("HeadHint = %q, want empty — no session, no divergence", spaces[0].HeadHint)
+	}
+	if spaces[0].BranchLabel() != "chore/restore-cron-rework" {
+		t.Errorf("BranchLabel() = %q, want %q", spaces[0].BranchLabel(), "chore/restore-cron-rework")
+	}
+}
+
+// A running session records the branch the worktree is for (@codeherd_branch).
+// When HEAD has since moved off it, that is a genuine divergence: label the row
+// by the recorded original and put the live branch in the hint. (Row G.)
+func TestList_nonMainWorktree_sessionDivergence_showsRecordedBranch(t *testing.T) {
+	dir := t.TempDir()
+	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
+	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat")
+	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	g := &fakeGit{ListFn: func(string) ([]git.WorktreeInfo, error) {
+		return []git.WorktreeInfo{{Path: wtPath, Branch: "other"}}, nil
+	}}
+	f := &fakeTmux{Sessions: []sessionRow{
+		{ID: "$1", Name: "myapp-feat", Canonical: "myapp-feat",
+			Type: "agent", Status: "running", Branch: "feat", Project: "myapp"},
+	}}
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: dir},
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git", DefaultBranch: "main"},
+		},
+	}
+	h := New(cfg, nil, Deps{Tmux: f, Git: g})
+
+	spaces, err := h.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if spaces[0].Agent == nil {
+		t.Fatal("expected the session to join its workspace")
+	}
+	if spaces[0].DisplayBranch != "feat" {
+		t.Errorf("DisplayBranch = %q, want the recorded branch %q", spaces[0].DisplayBranch, "feat")
 	}
 	if spaces[0].HeadHint != "on other" {
 		t.Errorf("HeadHint = %q, want %q", spaces[0].HeadHint, "on other")
+	}
+}
+
+// When the recorded branch and git's HEAD agree, there is no divergence and we
+// prefer git's live branch for display — the recorded value may be flattened,
+// git's is the real, unflattened name. (Row E.)
+func TestList_nonMainWorktree_sessionAgrees_showsLiveBranch(t *testing.T) {
+	dir := t.TempDir()
+	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
+	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat-x")
+	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	g := &fakeGit{ListFn: func(string) ([]git.WorktreeInfo, error) {
+		return []git.WorktreeInfo{{Path: wtPath, Branch: "feat/x"}}, nil
+	}}
+	f := &fakeTmux{Sessions: []sessionRow{
+		// Recorded flattened (a session launched from a listed Ref); git's
+		// "feat/x" is the same branch, unflattened.
+		{ID: "$1", Name: "myapp-feat-x", Canonical: "myapp-feat-x",
+			Type: "agent", Status: "running", Branch: "feat-x", Project: "myapp"},
+	}}
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: dir},
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git", DefaultBranch: "main"},
+		},
+	}
+	h := New(cfg, nil, Deps{Tmux: f, Git: g})
+
+	spaces, err := h.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if spaces[0].DisplayBranch != "feat/x" {
+		t.Errorf("DisplayBranch = %q, want git's unflattened branch %q", spaces[0].DisplayBranch, "feat/x")
+	}
+	if spaces[0].HeadHint != "" {
+		t.Errorf("HeadHint = %q, want empty — recorded and live agree", spaces[0].HeadHint)
+	}
+}
+
+// A detached non-main worktree with a running session recovers the branch from
+// the session record, so the row stays identifiable rather than collapsing to a
+// bare "(detached)". (Row H.)
+func TestList_nonMainWorktree_detachedWithSession_recoversRecordedBranch(t *testing.T) {
+	dir := t.TempDir()
+	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
+	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat")
+	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	g := &fakeGit{ListFn: func(string) ([]git.WorktreeInfo, error) {
+		return []git.WorktreeInfo{{Path: wtPath, Branch: "", Detached: true}}, nil
+	}}
+	f := &fakeTmux{Sessions: []sessionRow{
+		{ID: "$1", Name: "myapp-feat", Canonical: "myapp-feat",
+			Type: "agent", Status: "running", Branch: "feat", Project: "myapp"},
+	}}
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: dir},
+		Projects: map[string]config.ProjectConfig{
+			"myapp": {Repo: "git@github.com:user/myapp.git", DefaultBranch: "main"},
+		},
+	}
+	h := New(cfg, nil, Deps{Tmux: f, Git: g})
+
+	spaces, err := h.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if spaces[0].DisplayBranch != "feat" {
+		t.Errorf("DisplayBranch = %q, want recovered %q", spaces[0].DisplayBranch, "feat")
+	}
+	if spaces[0].HeadHint != "detached" {
+		t.Errorf("HeadHint = %q, want detached", spaces[0].HeadHint)
+	}
+}
+
+// FormatBranchLabel is the single formatter both the CLI and the TUI render
+// through. A diverged workspace carries its identity in DisplayBranch and the
+// live branch in HeadHint, so the two never restate each other.
+func TestFormatBranchLabel(t *testing.T) {
+	tests := []struct {
+		name          string
+		displayBranch string
+		headHint      string
+		want          string
+	}{
+		{"plain branch", "chore/frontend-arch", "", "chore/frontend-arch"},
+		{"main on default", "main", "", "main"},
+		{"main diverged", "main", "on docs/rbac-epic", "main (on docs/rbac-epic)"},
+		{"session divergence", "feat", "on other", "feat (on other)"},
+		{"detached with identity", "main", "detached", "main (detached)"},
+		{"detached without identity", "", "detached", "(detached)"},
+		{"empty", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FormatBranchLabel(tt.displayBranch, tt.headHint); got != tt.want {
+				t.Errorf("FormatBranchLabel(%q, %q) = %q, want %q", tt.displayBranch, tt.headHint, got, tt.want)
+			}
+			// Workspace.BranchLabel is the same formatter over the struct.
+			ws := Workspace{DisplayBranch: tt.displayBranch, HeadHint: tt.headHint}
+			if got := ws.BranchLabel(); got != tt.want {
+				t.Errorf("Workspace.BranchLabel() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

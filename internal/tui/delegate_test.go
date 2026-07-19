@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/list"
 
+	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/semconv"
 )
 
@@ -184,6 +185,85 @@ func TestDelegate_Render_noBranch(t *testing.T) {
 	// Should not have " / " for project-only items.
 	if strings.Contains(out, " / ") {
 		t.Errorf("render should not have ' / ' for project-only items, got: %q", out)
+	}
+}
+
+// The main worktree, when its HEAD is on a non-default branch, must render as
+// "<project> / main (on <live>)" — the identity branch labels the row and the
+// checkout is a hint. The regression it guards: rendering the live branch as
+// the label produced "geomonitor / docs/rbac-epic (on docs/rbac-epic)", with
+// the live branch doubled and "main" gone. Starts from a herd.Workspace so it
+// exercises the real buildItems -> delegate path, not a hand-built Item.
+func TestDelegate_Render_mainWorktreeDivergedHead(t *testing.T) {
+	spaces := []herd.Workspace{{
+		Ref:           herd.Ref{Project: "geomonitor", Branch: "main"},
+		DisplayBranch: "main",
+		HeadHint:      "on docs/rbac-epic",
+		IsMain:        true,
+		Path:          "/p/geomonitor",
+	}}
+	items := buildItems(nil, spaces)
+	d := newDelegate()
+	m := list.New(items, d, 80, 10)
+
+	var buf bytes.Buffer
+	d.Render(&buf, m, 0, items[0])
+	out := buf.String()
+
+	if !strings.Contains(out, "geomonitor / main (on docs/rbac-epic)") {
+		t.Errorf("render should label the main row by identity, got: %q", out)
+	}
+	if strings.Contains(out, "docs/rbac-epic (on docs/rbac-epic)") {
+		t.Errorf("render doubled the live branch instead of showing main, got: %q", out)
+	}
+}
+
+// A non-main worktree with no session shows git's live branch, clean — the
+// folder name never surfaces and there is no divergence hint. This is the
+// geomonitor chore-cron-rework row. Starts from a herd.Workspace so it
+// exercises the real buildItems -> delegate path.
+func TestDelegate_Render_nonMainNoSessionShowsLiveBranch(t *testing.T) {
+	spaces := []herd.Workspace{{
+		Ref:           herd.Ref{Project: "geomonitor", Branch: "chore-cron-rework"},
+		DisplayBranch: "chore/restore-cron-rework",
+		HeadHint:      "",
+		Path:          "/p/geomonitor/wt/chore-cron-rework",
+	}}
+	items := buildItems(nil, spaces)
+	d := newDelegate()
+	m := list.New(items, d, 80, 10)
+
+	var buf bytes.Buffer
+	d.Render(&buf, m, 0, items[0])
+	out := buf.String()
+
+	if !strings.Contains(out, "geomonitor / chore/restore-cron-rework") {
+		t.Errorf("render should show the live branch, got: %q", out)
+	}
+	if strings.Contains(out, "(on ") || strings.Contains(out, "chore-cron-rework (") {
+		t.Errorf("render should not add a hint or show the folder name, got: %q", out)
+	}
+}
+
+// With a session proving the divergence, the row shows the recorded branch and
+// the live checkout as a hint.
+func TestDelegate_Render_sessionDivergenceShowsRecordedBranch(t *testing.T) {
+	spaces := []herd.Workspace{{
+		Ref:           herd.Ref{Project: "geomonitor", Branch: "feat"},
+		DisplayBranch: "feat",
+		HeadHint:      "on other",
+		Path:          "/p/geomonitor/wt/feat",
+	}}
+	items := buildItems(nil, spaces)
+	d := newDelegate()
+	m := list.New(items, d, 80, 10)
+
+	var buf bytes.Buffer
+	d.Render(&buf, m, 0, items[0])
+	out := buf.String()
+
+	if !strings.Contains(out, "geomonitor / feat (on other)") {
+		t.Errorf("render should show recorded branch + hint, got: %q", out)
 	}
 }
 

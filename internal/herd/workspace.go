@@ -20,17 +20,51 @@ type Workspace struct {
 	Path   string
 	IsMain bool // true for the main clone dir
 
-	// DisplayBranch is what a front end should render: the branch HEAD is
-	// actually on. It is NOT identity and must never be fed back in — that
-	// round-trip is what orphaned an agent against a deleted worktree.
+	// DisplayBranch is the branch label a front end should render for this row,
+	// filled in by resolveDisplay. Normally it is git's live branch; only when
+	// HEAD has diverged from the branch the worktree is *for* (the default
+	// branch for the main clone dir; a running session's recorded branch
+	// otherwise) does it become that original branch, with HeadHint carrying the
+	// actual checkout. It is NOT a value to feed back in; use Ref for that —
+	// feeding DisplayBranch or Item.Branch back into an operation orphans an
+	// agent against a deleted worktree. Render it through FormatBranchLabel so
+	// the CLI and the TUI agree.
 	DisplayBranch string
 
-	// HeadHint is "detached", "on <branch>", or "" when HEAD agrees with Ref.
+	// HeadHint is "detached", "on <branch>", or "" when HEAD is on the branch
+	// the worktree is for. Front ends render it alongside DisplayBranch via
+	// FormatBranchLabel.
 	HeadHint string
 
 	// Agent and Shell are nil when that session type is not running.
 	Agent *Handle
 	Shell *Handle
+}
+
+// BranchLabel renders this workspace's branch column via FormatBranchLabel.
+func (w Workspace) BranchLabel() string {
+	return FormatBranchLabel(w.DisplayBranch, w.HeadHint)
+}
+
+// FormatBranchLabel renders a worktree's branch column: the display branch,
+// plus the head hint in parentheses when HEAD has diverged from the worktree's
+// identity. It is the single formatter shared by `ch list worktree` and the TUI
+// so both surfaces render a diverged or detached worktree identically. Because
+// a diverged workspace already carries its identity in DisplayBranch and the
+// live branch in headHint, the two never restate each other — there is no
+// "<branch> (on <branch>)" to suppress.
+func FormatBranchLabel(displayBranch, headHint string) string {
+	switch {
+	case displayBranch == "":
+		if headHint == "" {
+			return ""
+		}
+		return "(" + headHint + ")"
+	case headHint == "":
+		return displayBranch
+	default:
+		return displayBranch + " (" + headHint + ")"
+	}
 }
 
 // EnsureOpts configures workspace creation. The zero value creates the
@@ -288,28 +322,68 @@ func (h *Herd) List(project string) ([]Workspace, error) {
 					ws.Shell = &hd
 				}
 			}
+			// Display is resolved after the join: a non-main worktree's original
+			// branch lives on its session, so DisplayBranch/HeadHint cannot be
+			// decided until the sessions are attached.
+			resolveDisplay(&ws, defaultBranch, wt)
 			out = append(out, ws)
 		}
 	}
 	return out, nil
 }
 
-// workspaceFrom derives identity and display from one git worktree entry.
+// workspaceFrom derives a workspace's identity from one git worktree entry.
+// Display (DisplayBranch/HeadHint) is left for resolveDisplay, which runs after
+// sessions are joined — a non-main worktree's original branch is recorded on its
+// session, not in the worktree entry.
 func (h *Herd) workspaceFrom(project, cloneDir, defaultBranch string, wt git.WorktreeInfo) Workspace {
 	identity := semconv.WorktreeIdentityBranch(wt.Path, cloneDir, defaultBranch, wt.Branch)
-	ws := Workspace{
-		Ref:           h.Ref(project, identity),
-		Path:          wt.Path,
-		IsMain:        wt.Path == cloneDir,
-		DisplayBranch: wt.Branch,
+	return Workspace{
+		Ref:    h.Ref(project, identity),
+		Path:   wt.Path,
+		IsMain: wt.Path == cloneDir,
 	}
+}
+
+// resolveDisplay fills DisplayBranch and HeadHint from the authoritative
+// sources, once sessions are joined.
+//
+// git's wt.Branch is the ground truth of what is checked out. The "original"
+// branch a worktree is *for* is the default branch for the main clone dir, or
+// the branch a running session recorded (@codeherd_branch) for any other
+// worktree. Divergence is HEAD leaving that original — which is why a worktree
+// with no known original (a non-main worktree with no session) is never treated
+// as diverged: it shows exactly what git reports. The folder-name identity in
+// ws.Ref is only an addressing key and must never surface as a display value —
+// rendering it is what showed "chore-cron-rework (on chore/restore-cron-rework)"
+// for a worktree simply sitting on its own branch.
+//
+// The common case is a worktree with no session, so it must not depend on one;
+// the session only refines a genuine divergence (created for X, now on Y) and
+// recovers a branch name for a detached HEAD.
+func resolveDisplay(ws *Workspace, defaultBranch string, wt git.WorktreeInfo) {
+	original := ""
+	switch {
+	case ws.IsMain:
+		original = defaultBranch
+	case ws.Agent != nil:
+		original = ws.Agent.Ref.Branch
+	case ws.Shell != nil:
+		original = ws.Shell.Ref.Branch
+	}
+
 	switch {
 	case wt.Detached:
+		// No live branch to show; recover the original when we have one,
+		// otherwise the label is just "(detached)".
+		ws.DisplayBranch = original
 		ws.HeadHint = "detached"
-	case wt.Branch != "" && semconv.FlattenBranch(wt.Branch) != semconv.FlattenBranch(identity):
+	case original != "" && semconv.FlattenBranch(wt.Branch) != semconv.FlattenBranch(original):
+		ws.DisplayBranch = original
 		ws.HeadHint = "on " + wt.Branch
+	default:
+		ws.DisplayBranch = wt.Branch
 	}
-	return ws
 }
 
 // Teardown stops a workspace's sessions and deletes its worktree.

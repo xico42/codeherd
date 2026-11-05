@@ -45,12 +45,27 @@ It is like a shepherd, but for coding agents :).
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
 		}
+		if err := printWarnings(cmd, registry); err != nil {
+			return err
+		}
 		h = herd.New(cfg, registry, herd.Deps{
 			Tmux: tmux.NewRealRunner(),
 			Git:  git.NewRealRunner(),
 		})
 		return nil
 	},
+}
+
+// printWarnings reports the problems config.Load tolerated on stderr.
+func printWarnings(cmd *cobra.Command, reg *config.ProfileRegistry) error {
+	if reg == nil {
+		return nil
+	}
+	errOut := newPrinter(cmd.ErrOrStderr())
+	for _, w := range reg.Warnings {
+		errOut.Printf("warning: %s\n", w)
+	}
+	return errOut.Err()
 }
 
 func init() {

@@ -112,18 +112,7 @@ func TestWorktreeDelete_abortedPrompt(t *testing.T) {
 	projectsDir := t.TempDir()
 	cfgPath := writeConfig(t, projectsDir)
 
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.WriteString("n\n"); err != nil {
-		t.Fatal(err)
-	}
-	w.Close()
-
-	origStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = origStdin }()
+	setStdin(t, "n\n")
 
 	if err := runCmd(t, "--config", cfgPath, "delete", "worktree", "myapp", "feature"); err != nil {
 		t.Logf("delete returned error (acceptable): %v", err)

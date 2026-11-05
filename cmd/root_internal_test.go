@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/herd"
@@ -40,4 +43,37 @@ func TestResolveProfileArg(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPrintWarnings(t *testing.T) {
+	reg := &config.ProfileRegistry{Warnings: []string{"first", "second"}}
+
+	t.Run("prints each warning", func(t *testing.T) {
+		c := &cobra.Command{}
+		var errOut bytes.Buffer
+		c.SetErr(&errOut)
+		if err := printWarnings(c, reg); err != nil {
+			t.Fatalf("printWarnings() = %v, want nil", err)
+		}
+		if got := errOut.String(); got != "warning: first\nwarning: second\n" {
+			t.Errorf("stderr = %q", got)
+		}
+	})
+
+	t.Run("nil registry prints nothing", func(t *testing.T) {
+		c := &cobra.Command{}
+		var errOut bytes.Buffer
+		c.SetErr(&errOut)
+		if err := printWarnings(c, nil); err != nil || errOut.Len() != 0 {
+			t.Errorf("printWarnings(nil) = %v with stderr %q, want nil and nothing", err, errOut.String())
+		}
+	})
+
+	t.Run("reports a failed write", func(t *testing.T) {
+		c := &cobra.Command{}
+		c.SetErr(failWriter{})
+		if err := printWarnings(c, reg); err == nil {
+			t.Error("printWarnings() = nil, want the write error")
+		}
+	})
 }

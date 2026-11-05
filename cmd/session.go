@@ -61,15 +61,13 @@ func (c *ListSessionCmd) Run(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "SESSION\tTYPE\tSTATUS")
+	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
+	w := newPrinter(tw)
+	w.Println("SESSION\tTYPE\tSTATUS")
 	for _, s := range sessions {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", s.Ref.CanonicalName(), s.Type, s.Status)
+		w.Printf("%s\t%s\t%s\n", s.Ref.CanonicalName(), s.Type, s.Status)
 	}
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("flushing output: %w", err)
-	}
-	return nil
+	return flushTable(tw, w)
 }
 
 // ── show ─────────────────────────────────────────────────────────────────────
@@ -97,20 +95,18 @@ func (c *ShowSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return herdErr(project, branch, err)
 	}
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "Session:\t%s\n", info.Ref.CanonicalName())
-	fmt.Fprintf(w, "Type:\t%s\n", info.Type)
-	fmt.Fprintf(w, "Status:\t%s\n", info.Status)
+	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	w := newPrinter(tw)
+	w.Printf("Session:\t%s\n", info.Ref.CanonicalName())
+	w.Printf("Type:\t%s\n", info.Type)
+	w.Printf("Status:\t%s\n", info.Status)
 	if info.Annotation != "" {
-		fmt.Fprintf(w, "Annotation:\t%s\n", info.Annotation)
+		w.Printf("Annotation:\t%s\n", info.Annotation)
 	}
 	if !info.StartedAt.IsZero() {
-		fmt.Fprintf(w, "Started:\t%s\n", info.StartedAt.Format(time.RFC3339))
+		w.Printf("Started:\t%s\n", info.StartedAt.Format(time.RFC3339))
 	}
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("flushing output: %w", err)
-	}
-	return nil
+	return flushTable(tw, w)
 }
 
 // ── create ───────────────────────────────────────────────────────────────────
@@ -139,6 +135,7 @@ func (c *CreateSessionCmd) Cobra() *cobra.Command {
 
 func (c *CreateSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	project, branch := args[0], args[1]
+	out := newPrinter(cmd.OutOrStdout())
 
 	sessionType := sessionTypeFromFlag(c.Shell)
 
@@ -156,14 +153,14 @@ func (c *CreateSessionCmd) Run(cmd *cobra.Command, args []string) error {
 		}
 		// Already there — that is the common case for `create session`.
 	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "Worktree %s/%s not found, creating...  done\n", project, branch)
+		out.Printf("Worktree %s/%s not found, creating...  done\n", project, branch)
 	}
 
 	name := ref.CanonicalName()
 	if sessionType == herd.SessionTypeShell {
 		name = semconv.ShellSessionName(ref.Profile, project, branch)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", name)
+	out.Printf("Starting session %s...  ", name)
 
 	handle, err := h.Launch(ref, herd.LaunchOpts{
 		Type:   sessionType,
@@ -171,17 +168,20 @@ func (c *CreateSessionCmd) Run(cmd *cobra.Command, args []string) error {
 		Attach: c.Attach,
 	})
 	if err != nil {
-		fmt.Fprintln(cmd.OutOrStdout())
+		out.Println()
 		return herdErr(project, branch, err)
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "done")
+	out.Println("done")
 	if !c.Attach {
 		shellSuffix := ""
 		if c.Shell {
 			shellSuffix = " --shell"
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Attach with: ch attach session %s %s%s\n", project, branch, shellSuffix)
-		return nil
+		out.Printf("Attach with: ch attach session %s %s%s\n", project, branch, shellSuffix)
+		return out.Err()
+	}
+	if err := out.Err(); err != nil {
+		return err
 	}
 	return execTmuxAttach(handle.ID)
 }
@@ -209,6 +209,7 @@ func (c *DeleteSessionCmd) Cobra() *cobra.Command {
 
 func (c *DeleteSessionCmd) Run(cmd *cobra.Command, args []string) error {
 	project, branch := args[0], args[1]
+	out := newPrinter(cmd.OutOrStdout())
 	sessionType := sessionTypeFromFlag(c.Shell)
 
 	if !c.Force {
@@ -217,23 +218,23 @@ func (c *DeleteSessionCmd) Run(cmd *cobra.Command, args []string) error {
 			return herdErr(project, branch, err)
 		}
 		if info.Status == herd.StatusRunning {
-			fmt.Fprintf(cmd.OutOrStdout(), "Delete session %s/%s (%s)? [y/N] ", project, branch, sessionType)
+			out.Printf("Delete session %s/%s (%s)? [y/N] ", project, branch, sessionType)
 			scanner := bufio.NewScanner(cmd.InOrStdin())
 			scanner.Scan()
 			if scanner.Text() != "y" && scanner.Text() != "Y" {
-				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
-				return nil
+				out.Println("Aborted.")
+				return out.Err()
 			}
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Stopping %s/%s...  ", project, branch)
+	out.Printf("Stopping %s/%s...  ", project, branch)
 	if _, err := h.StopSessions(h.Ref(project, branch), herd.StopOpts{Type: sessionType}); err != nil {
-		fmt.Fprintln(cmd.OutOrStdout())
+		out.Println()
 		return herdErr(project, branch, err)
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "done")
-	return nil
+	out.Println("done")
+	return out.Err()
 }
 
 // ── attach ───────────────────────────────────────────────────────────────────

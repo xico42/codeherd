@@ -34,19 +34,17 @@ func (c *ListWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "PROJECT\tBRANCH\tPATH\tSESSION")
+	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
+	w := newPrinter(tw)
+	w.Println("PROJECT\tBRANCH\tPATH\tSESSION")
 	for _, ws := range spaces {
 		sess := "--"
 		if ws.Agent != nil {
 			sess = ws.Agent.Ref.CanonicalName() + " (running)"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", ws.Ref.Project, ws.BranchLabel(), ws.Path, sess)
+		w.Printf("%s\t%s\t%s\t%s\n", ws.Ref.Project, ws.BranchLabel(), ws.Path, sess)
 	}
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("flushing output: %w", err)
-	}
-	return nil
+	return flushTable(tw, w)
 }
 
 // ── create ───────────────────────────────────────────────────────────────────
@@ -80,6 +78,7 @@ func (c *CreateWorktreeCmd) Cobra() *cobra.Command {
 
 func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 	project := args[0]
+	out := newPrinter(cmd.OutOrStdout())
 	posBranch := ""
 	if len(args) > 1 {
 		posBranch = args[1]
@@ -90,9 +89,9 @@ func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 
 	switch {
 	case c.Track != "":
-		fmt.Fprintf(cmd.OutOrStdout(), "Checking out %s into a new worktree...  ", c.Track)
+		out.Printf("Checking out %s into a new worktree...  ", c.Track)
 	default:
-		fmt.Fprintf(cmd.OutOrStdout(), "Creating worktree %s/%s...  ", project, posBranch)
+		out.Printf("Creating worktree %s/%s...  ", project, posBranch)
 	}
 
 	ws, err := h.EnsureWorkspace(h.Ref(project, posBranch), herd.EnsureOpts{
@@ -102,12 +101,12 @@ func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 		Track:      c.Track,
 	})
 	if err != nil {
-		fmt.Fprintln(cmd.OutOrStdout())
+		out.Println()
 		return herdErr(project, posBranch, err)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "done")
-	fmt.Fprintf(cmd.OutOrStdout(), "  Path: %s\n", ws.Path)
+	out.Println("done")
+	out.Printf("  Path: %s\n", ws.Path)
 
 	if c.Attach {
 		flagAgent := ""
@@ -115,17 +114,20 @@ func (c *CreateWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 			flagAgent = c.Agent
 		}
 		// ws.Ref is authoritative — Track may have derived a different local branch.
-		fmt.Fprintf(cmd.OutOrStdout(), "Starting session %s...  ", ws.Ref.CanonicalName())
+		out.Printf("Starting session %s...  ", ws.Ref.CanonicalName())
 		handle, err := h.Launch(ws.Ref, herd.LaunchOpts{Agent: flagAgent, Attach: true})
 		if err != nil {
-			fmt.Fprintln(cmd.OutOrStdout())
+			out.Println()
 			return herdErr(ws.Ref.Project, ws.Ref.Branch, err)
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), "done")
+		out.Println("done")
+		if err := out.Err(); err != nil {
+			return err
+		}
 		return execTmuxAttach(handle.ID)
 	}
 
-	return nil
+	return out.Err()
 }
 
 // ── delete ───────────────────────────────────────────────────────────────────
@@ -149,23 +151,24 @@ func (c *DeleteWorktreeCmd) Cobra() *cobra.Command {
 
 func (c *DeleteWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 	project, branch := args[0], args[1]
+	out := newPrinter(cmd.OutOrStdout())
 
 	if !c.Force {
-		fmt.Fprintf(cmd.OutOrStdout(), "Delete worktree %s/%s? [y/N] ", project, branch)
+		out.Printf("Delete worktree %s/%s? [y/N] ", project, branch)
 		scanner := bufio.NewScanner(cmd.InOrStdin())
 		scanner.Scan()
 		if scanner.Text() != "y" && scanner.Text() != "Y" {
-			fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
-			return nil
+			out.Println("Aborted.")
+			return out.Err()
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Deleting worktree %s/%s...  ", project, branch)
+	out.Printf("Deleting worktree %s/%s...  ", project, branch)
 	if err := h.Teardown(h.Ref(project, branch), herd.TeardownOpts{Force: c.Force}); err != nil {
-		fmt.Fprintln(cmd.OutOrStdout())
+		out.Println()
 		return herdErr(project, branch, err)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "done")
-	return nil
+	out.Println("done")
+	return out.Err()
 }

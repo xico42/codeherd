@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,25 +12,15 @@ import (
 	"github.com/pelletier/go-toml"
 )
 
-var warningSink io.Writer = os.Stderr
-
-// SetWarningSink replaces the destination used by Load for one-time
-// warnings. Pass nil to reset to os.Stderr. Intended for tests.
-func SetWarningSink(w io.Writer) {
-	if w == nil {
-		warningSink = os.Stderr
-		return
-	}
-	warningSink = w
-}
-
 // ProfileRegistry summarizes the set of discovered profiles and which
 // one is active. Returned by Load alongside *Config when profile mode
-// is on. Commands ignore it; the TUI uses it for cycling.
+// is on. The TUI uses it for cycling.
 type ProfileRegistry struct {
 	Active      string
 	Names       []string
 	ProfilesDir string
+	// Warnings are problems Load tolerated; the front end shows them.
+	Warnings []string
 }
 
 // LoadProfile parses <profilesDir>/<name>.toml and returns its Config.
@@ -75,8 +64,6 @@ func loadProfileMode(main *Config, mainPath, profileName string) (*Config, *Prof
 		return nil, nil, fmt.Errorf("profiles_enabled=true but no profile specified: set defaults.main_profile in %s or pass -p/--profile", mainPath)
 	}
 
-	warnStrayKeys(main, mainPath)
-
 	profCfg, err := LoadProfile(profilesDir, active)
 	if err != nil {
 		return nil, nil, err
@@ -92,10 +79,15 @@ func loadProfileMode(main *Config, mainPath, profileName string) (*Config, *Prof
 		return nil, nil, err
 	}
 	reg := &ProfileRegistry{Active: active, Names: names, ProfilesDir: profilesDir}
+	if w := strayKeysWarning(main, mainPath); w != "" {
+		reg.Warnings = append(reg.Warnings, w)
+	}
 	return profCfg, reg, nil
 }
 
-func warnStrayKeys(main *Config, mainPath string) {
+// strayKeysWarning describes the main-config keys that profile mode ignores,
+// or returns "" when there are none.
+func strayKeysWarning(main *Config, mainPath string) string {
 	var stray []string
 	if main.Defaults.ProjectsDir != "" {
 		stray = append(stray, "defaults.projects_dir")
@@ -110,9 +102,9 @@ func warnStrayKeys(main *Config, mainPath string) {
 		stray = append(stray, "agents")
 	}
 	if len(stray) == 0 {
-		return
+		return ""
 	}
-	fmt.Fprintf(warningSink, "warning: %s sets profiles_enabled=true; ignoring %s in main config\n", mainPath, strings.Join(stray, ", "))
+	return fmt.Sprintf("%s sets profiles_enabled=true; ignoring %s in main config", mainPath, strings.Join(stray, ", "))
 }
 
 // resolveProfilesDir returns the directory holding profile TOML files for

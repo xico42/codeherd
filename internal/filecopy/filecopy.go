@@ -1,6 +1,7 @@
 package filecopy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -72,13 +73,14 @@ func resolveSrc(src, baseDir string) string {
 	return filepath.Join(baseDir, src)
 }
 
-// copyFile copies a single file, creating intermediate directories.
-func copyFile(src, dst string) error {
+// copyFile copies a single file, creating intermediate directories. A failed
+// close is reported: for dst it can mean the copy never reached the disk.
+func copyFile(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("opening source %s: %w", src, err)
 	}
-	defer in.Close()
+	defer func() { err = errors.Join(err, in.Close()) }()
 
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("creating directories: %w", err)
@@ -88,7 +90,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("creating destination %s: %w", dst, err)
 	}
-	defer out.Close()
+	defer func() { err = errors.Join(err, out.Close()) }()
 
 	if _, err := io.Copy(out, in); err != nil {
 		return fmt.Errorf("copying data: %w", err)

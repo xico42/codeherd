@@ -66,19 +66,39 @@ main_profile = "personal"
 // Not safe for t.Parallel — mutates the package-global os.Stdout.
 func captureStdout(t *testing.T, f func()) string {
 	t.Helper()
-	orig := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	done := make(chan string)
+	return captureFile(t, &os.Stdout, f)
+}
+
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	return captureFile(t, &os.Stderr, f)
+}
+
+// captureFile redirects *target to a pipe while f runs and returns what was
+// written to it.
+func captureFile(t *testing.T, target **os.File, f func()) string {
+	t.Helper()
+	orig := *target
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	*target = w
+	done := make(chan error)
+	var buf bytes.Buffer
 	go func() {
-		var buf bytes.Buffer
-		io.Copy(&buf, r)
-		done <- buf.String()
+		_, err := io.Copy(&buf, r)
+		done <- err
 	}()
 	f()
-	w.Close()
-	os.Stdout = orig
-	return <-done
+	*target = orig
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("reading captured output: %v", err)
+	}
+	return buf.String()
 }
 
 func TestProfiles_listProjectScopedToActiveProfile(t *testing.T) {
@@ -177,17 +197,14 @@ func TestProfiles_strayKeysWarning(t *testing.T) {
 	}
 	f.Close()
 
-	// Intercept the warning via the explicit sink (set in Chunk 1 Task 1.3).
-	var buf bytes.Buffer
-	config.SetWarningSink(&buf)
-	defer config.SetWarningSink(nil)
-
-	err = runCmd(t, "--config", main, "--profile", "personal", "list", "project")
+	stderr := captureStderr(t, func() {
+		err = runCmd(t, "--config", main, "--profile", "personal", "list", "project")
+	})
 	if err != nil {
 		t.Fatalf("runCmd() error = %v, want nil (warning, not failure)", err)
 	}
-	if !strings.Contains(buf.String(), "profiles_enabled=true") {
-		t.Errorf("warning sink = %q, want stray-keys warning", buf.String())
+	if !strings.Contains(stderr, "warning: ") || !strings.Contains(stderr, "profiles_enabled=true") {
+		t.Errorf("stderr = %q, want stray-keys warning", stderr)
 	}
 }
 

@@ -149,14 +149,8 @@ func TestDeleteSession_promptAbort(t *testing.T) {
 	var out bytes.Buffer
 	cobraCmd.SetOut(&out)
 
-	// Pipe "n\n" to stdin so the prompt receives a "no" answer.
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Fprintln(pw, "n")
-	pw.Close()
-	cobraCmd.SetIn(pr)
+	// Answer "n" so the prompt aborts.
+	cobraCmd.SetIn(strings.NewReader("n\n"))
 
 	if err := c.Run(cobraCmd, []string{"myapp", "feat"}); err != nil {
 		t.Fatalf("Run() = %v, want nil (aborted)", err)
@@ -188,13 +182,7 @@ func TestDeleteSession_promptConfirm_callsStop(t *testing.T) {
 	var out bytes.Buffer
 	cobraCmd.SetOut(&out)
 
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Fprintln(pw, "y")
-	pw.Close()
-	cobraCmd.SetIn(pr)
+	cobraCmd.SetIn(strings.NewReader("y\n"))
 
 	if err := c.Run(cobraCmd, []string{"myapp", "feat"}); err != nil {
 		t.Fatalf("Run() = %v, want nil", err)
@@ -371,5 +359,60 @@ func TestCreateSession_shell_existingWorktree(t *testing.T) {
 
 	if !strings.Contains(out.String(), "Starting session myapp-feat~sh") {
 		t.Errorf("output %q does not show shell session name (runErr=%v)", out.String(), runErr)
+	}
+}
+
+// TestShowSession_outputsAnnotationAndStartedAt verifies that the optional
+// Annotation and Started rows are printed when the session carries them.
+func TestShowSession_outputsAnnotationAndStartedAt(t *testing.T) {
+	canonical := semconv.SessionName("", "myapp", "feat")
+	line := strings.Join([]string{
+		"$42", canonical, canonical, "agent", "running",
+		"fixing the parser", "2026-01-02T03:04:05Z", "", "feat", "myapp",
+	}, "\t") + "\n"
+	r := &multiMockRunner{responses: []mockResponse{{stdout: line, exitCode: 0}}}
+	setHerdTmux(t, &config.Config{}, r)
+
+	c := &ShowSessionCmd{}
+	cobraCmd := c.Cobra()
+	var out bytes.Buffer
+	cobraCmd.SetOut(&out)
+
+	if err := c.Run(cobraCmd, []string{"myapp", "feat"}); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "Annotation:  fixing the parser") {
+		t.Errorf("output %q does not contain the annotation row", got)
+	}
+	if !strings.Contains(got, "Started:     2026-01-02T03:04:05Z") {
+		t.Errorf("output %q does not contain the started row", got)
+	}
+}
+
+// TestDeleteSession_force_stopError verifies that a StopSessions failure is
+// returned and the progress line is terminated before the error is reported.
+func TestDeleteSession_force_stopError(t *testing.T) {
+	r := &multiMockRunner{
+		responses: []mockResponse{
+			// list-sessions for h.StopSessions fails outright.
+			{stderr: "server exploded", exitCode: 2},
+		},
+	}
+	setHerdTmux(t, &config.Config{}, r)
+
+	c := &DeleteSessionCmd{}
+	cobraCmd := c.Cobra()
+	c.Force = true // after Cobra(), which resets flag fields to their defaults
+	var out bytes.Buffer
+	cobraCmd.SetOut(&out)
+
+	err := c.Run(cobraCmd, []string{"myapp", "feat"})
+	if err == nil || !strings.Contains(err.Error(), "server exploded") {
+		t.Fatalf("Run() = %v, want error mentioning the tmux failure", err)
+	}
+	if got := out.String(); got != "Stopping myapp/feat...  \n" {
+		t.Errorf("output = %q, want the progress line terminated by a newline", got)
 	}
 }

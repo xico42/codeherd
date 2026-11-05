@@ -1,7 +1,6 @@
 package cmd_test
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
@@ -10,13 +9,7 @@ func TestPluginHandleClaude_UserPromptSubmit(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
 
 	// Pipe JSON to stdin
-	r, w, _ := os.Pipe()
-	_, _ = w.WriteString(`{"hook_event_name": "UserPromptSubmit", "prompt": "do something"}`)
-	w.Close()
-
-	oldStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
+	setStdin(t, `{"hook_event_name": "UserPromptSubmit", "prompt": "do something"}`)
 
 	t.Setenv("DEVENV_SESSION", "myapp-feature")
 
@@ -30,13 +23,7 @@ func TestPluginHandleClaude_UserPromptSubmit(t *testing.T) {
 func TestPluginHandleClaude_Notification(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
 
-	r, w, _ := os.Pipe()
-	_, _ = w.WriteString(`{"hook_event_name": "Notification", "message": "Claude needs permission", "notification_type": "permission_prompt"}`)
-	w.Close()
-
-	oldStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
+	setStdin(t, `{"hook_event_name": "Notification", "message": "Claude needs permission", "notification_type": "permission_prompt"}`)
 
 	t.Setenv("DEVENV_SESSION", "myapp-feature")
 
@@ -49,13 +36,7 @@ func TestPluginHandleClaude_Notification(t *testing.T) {
 func TestPluginHandleClaude_Stop(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
 
-	r, w, _ := os.Pipe()
-	_, _ = w.WriteString(`{"hook_event_name": "Stop", "last_assistant_message": "I have completed the refactoring. Here is a summary of the changes made across all files."}`)
-	w.Close()
-
-	oldStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
+	setStdin(t, `{"hook_event_name": "Stop", "last_assistant_message": "I have completed the refactoring. Here is a summary of the changes made across all files."}`)
 
 	t.Setenv("DEVENV_SESSION", "myapp-feature")
 
@@ -68,13 +49,7 @@ func TestPluginHandleClaude_Stop(t *testing.T) {
 func TestPluginHandleClaude_NoSession(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
 
-	r, w, _ := os.Pipe()
-	_, _ = w.WriteString(`{"hook_event_name": "UserPromptSubmit"}`)
-	w.Close()
-
-	oldStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
+	setStdin(t, `{"hook_event_name": "UserPromptSubmit"}`)
 
 	// No DEVENV_SESSION set — should succeed silently
 	t.Setenv("DEVENV_SESSION", "")
@@ -88,13 +63,7 @@ func TestPluginHandleClaude_NoSession(t *testing.T) {
 func TestPluginHandleClaude_MalformedJSON(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
 
-	r, w, _ := os.Pipe()
-	_, _ = w.WriteString(`{invalid json`)
-	w.Close()
-
-	oldStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
+	setStdin(t, `{invalid json`)
 
 	t.Setenv("DEVENV_SESSION", "myapp-feature")
 
@@ -108,13 +77,7 @@ func TestPluginHandleClaude_MalformedJSON(t *testing.T) {
 func TestPluginHandleClaude_UnknownEvent(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
 
-	r, w, _ := os.Pipe()
-	_, _ = w.WriteString(`{"hook_event_name": "SessionStart"}`)
-	w.Close()
-
-	oldStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
+	setStdin(t, `{"hook_event_name": "SessionStart"}`)
 
 	t.Setenv("DEVENV_SESSION", "myapp-feature")
 
@@ -128,13 +91,7 @@ func TestPluginHandleClaude_StopTruncatesAnnotation(t *testing.T) {
 	cfgPath := writeSessionConfig(t, t.TempDir())
 
 	longMessage := strings.Repeat("a", 200)
-	r, w, _ := os.Pipe()
-	_, _ = w.WriteString(`{"hook_event_name": "Stop", "last_assistant_message": "` + longMessage + `"}`)
-	w.Close()
-
-	oldStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
+	setStdin(t, `{"hook_event_name": "Stop", "last_assistant_message": "`+longMessage+`"}`)
 
 	t.Setenv("DEVENV_SESSION", "myapp-feature")
 

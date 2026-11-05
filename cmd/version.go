@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 )
 
@@ -10,8 +8,10 @@ func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Fprintln(cmd.OutOrStdout(), cmd.Root().Version)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := newPrinter(cmd.OutOrStdout())
+			out.Println(cmd.Root().Version)
+			return out.Err()
 		},
 	}
 }

@@ -42,6 +42,7 @@ and --branch flags as fallbacks.`,
 }
 
 func (c *TemplateCmd) Run(cmd *cobra.Command, args []string) error {
+	out := newPrinter(cmd.OutOrStdout())
 	dir := "."
 	if len(args) == 1 {
 		dir = args[0]
@@ -72,7 +73,7 @@ func (c *TemplateCmd) Run(cmd *cobra.Command, args []string) error {
 	hook := hooks.New(projCfg.Hooks)
 
 	if !c.DryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "Processing templates...  ")
+		out.Printf("Processing templates...  ")
 	}
 
 	tmplSvc := herdtemplate.New(hook)
@@ -89,23 +90,23 @@ func (c *TemplateCmd) Run(cmd *cobra.Command, args []string) error {
 	})
 	if err != nil {
 		if !c.DryRun {
-			fmt.Fprintln(cmd.OutOrStdout())
+			out.Println()
 		}
 		return fmt.Errorf("processing templates: %w", err)
 	}
 
 	if c.DryRun {
 		for _, f := range result.Files {
-			fmt.Fprintf(cmd.OutOrStdout(), "# %s\n%s\n", f.Target, f.Output)
+			out.Printf("# %s\n%s\n", f.Target, f.Output)
 		}
-		return nil
+		return out.Err()
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "done")
+	out.Println("done")
 	for _, f := range result.Files {
-		fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", f.Target)
+		out.Printf("  %s\n", f.Target)
 	}
-	return nil
+	return out.Err()
 }
 
 // resolveProjectFromDir matches a directory against configured projects by checking

@@ -75,3 +75,26 @@ func TestExecute_Version(t *testing.T) {
 		t.Errorf("Execute(version) = %v, want nil", err)
 	}
 }
+
+// setStdin replaces os.Stdin with a pipe holding input for the rest of the test.
+func setStdin(t *testing.T, input string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteString(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = orig
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+}

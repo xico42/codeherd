@@ -160,3 +160,21 @@ func TestTemplate_resolveProjectFromDir(t *testing.T) {
 		t.Errorf("expected PROJECT=myapp, got: %s", out)
 	}
 }
+
+// TestTemplate_invalidTemplate_returnsError verifies that a template that
+// fails to parse aborts the command with a processing error.
+func TestTemplate_invalidTemplate_returnsError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte("{{ .Project "), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgPath := filepath.Join(dir, "config.toml")
+	err := runCmd(t, "--config", cfgPath, "template", "--project", "myapp", "--branch", "feat", dir)
+	if err == nil || !strings.Contains(err.Error(), "processing templates") {
+		t.Fatalf("expected a processing templates error, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".env")); !os.IsNotExist(statErr) {
+		t.Errorf("no output file should be written for an invalid template, stat err = %v", statErr)
+	}
+}

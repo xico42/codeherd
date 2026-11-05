@@ -281,14 +281,14 @@ projects_dir = "~/ignored"
 [projects.ignored]
 repo = "git@x:i"
 `)
-	var buf strings.Builder
-	config.SetWarningSink(&buf)
-	defer config.SetWarningSink(nil)
-	_, _, err := config.Load(main, "")
+	_, reg, err := config.Load(main, "")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	out := buf.String()
+	if len(reg.Warnings) != 1 {
+		t.Fatalf("Warnings = %q, want exactly one stray-keys warning", reg.Warnings)
+	}
+	out := reg.Warnings[0]
 	if !strings.Contains(out, "profiles_enabled=true") {
 		t.Errorf("warning missing profiles_enabled mention: %q", out)
 	}

@@ -5,29 +5,14 @@ package herd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/git"
+	"github.com/xico42/codeherd/internal/testutil"
 )
-
-func runGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
-		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test",
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return string(out)
-}
 
 // localCloneGit is a real git runner whose Clone ignores the configured repo
 // URL and clones a local remote instead, so AutoClone can be exercised offline
@@ -38,18 +23,8 @@ type localCloneGit struct {
 }
 
 func (g localCloneGit) Clone(_, path, branch string) error {
-	args := []string{"clone"}
-	if branch != "" {
-		args = append(args, "-b", branch)
-	}
-	args = append(args, g.source, path)
-	cmd := exec.Command("git", args...)
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
-		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("clone: %v\n%s", err, out)
+	if err := g.Runner.Clone(g.source, path, branch); err != nil {
+		return fmt.Errorf("local clone of %s: %w", g.source, err)
 	}
 	return nil
 }
@@ -69,15 +44,15 @@ func TestEnsureWorkspace_autoClone_endToEnd(t *testing.T) {
 	// Build an upstream repo whose default branch is main and that carries a
 	// go.mod, so the clone and its worktree can be asserted below.
 	remote := filepath.Join(root, "remote")
-	if err := os.MkdirAll(remote, 0o755); err != nil {
+	if err := os.MkdirAll(remote, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, remote, "init", "-b", "main")
-	if err := os.WriteFile(filepath.Join(remote, "go.mod"), []byte("module myapp\n\ngo 1.22\n"), 0o644); err != nil {
+	testutil.Git(t, remote, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(remote, "go.mod"), []byte("module myapp\n\ngo 1.22\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, remote, "add", ".")
-	runGit(t, remote, "commit", "-m", "init")
+	testutil.Git(t, remote, "add", ".")
+	testutil.Git(t, remote, "commit", "-m", "init")
 
 	projectsDir := filepath.Join(root, "projects")
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
@@ -129,30 +104,30 @@ func TestEnsureWorkspace_tracking_endToEnd(t *testing.T) {
 
 	// Build an upstream repo with a PR branch.
 	remote := filepath.Join(root, "remote")
-	if err := os.MkdirAll(remote, 0o755); err != nil {
+	if err := os.MkdirAll(remote, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, remote, "init", "-b", "main")
-	if err := os.WriteFile(filepath.Join(remote, "README.md"), []byte("hi\n"), 0o644); err != nil {
+	testutil.Git(t, remote, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(remote, "README.md"), []byte("hi\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, remote, "add", ".")
-	runGit(t, remote, "commit", "-m", "init")
-	runGit(t, remote, "checkout", "-b", "feat-x")
-	if err := os.WriteFile(filepath.Join(remote, "feature.txt"), []byte("x\n"), 0o644); err != nil {
+	testutil.Git(t, remote, "add", ".")
+	testutil.Git(t, remote, "commit", "-m", "init")
+	testutil.Git(t, remote, "checkout", "-b", "feat-x")
+	if err := os.WriteFile(filepath.Join(remote, "feature.txt"), []byte("x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, remote, "add", ".")
-	runGit(t, remote, "commit", "-m", "feature")
-	runGit(t, remote, "checkout", "main")
+	testutil.Git(t, remote, "add", ".")
+	testutil.Git(t, remote, "commit", "-m", "feature")
+	testutil.Git(t, remote, "checkout", "main")
 
 	// Clone into the codeherd layout: <projectsDir>/github.com/user/myapp.
 	projectsDir := filepath.Join(root, "projects")
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(filepath.Dir(cloneDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cloneDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, root, "clone", remote, cloneDir)
+	testutil.Git(t, root, "clone", remote, cloneDir)
 
 	cfg := &config.Config{
 		Defaults: config.DefaultsConfig{ProjectsDir: projectsDir},
@@ -173,11 +148,11 @@ func TestEnsureWorkspace_tracking_endToEnd(t *testing.T) {
 		t.Errorf("expected feature.txt in worktree: %v", err)
 	}
 
-	branch := strings.TrimSpace(runGit(t, ws.Path, "rev-parse", "--abbrev-ref", "HEAD"))
+	branch := strings.TrimSpace(testutil.Git(t, ws.Path, "rev-parse", "--abbrev-ref", "HEAD"))
 	if branch != "feat-x" {
 		t.Errorf("worktree branch = %q, want feat-x", branch)
 	}
-	upstream := strings.TrimSpace(runGit(t, ws.Path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"))
+	upstream := strings.TrimSpace(testutil.Git(t, ws.Path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"))
 	if upstream != "origin/feat-x" {
 		t.Errorf("upstream = %q, want origin/feat-x", upstream)
 	}

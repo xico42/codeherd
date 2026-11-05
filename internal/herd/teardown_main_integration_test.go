@@ -10,6 +10,7 @@ import (
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/git"
+	"github.com/xico42/codeherd/internal/testutil"
 )
 
 // Teardown must refuse the main worktree with ErrMainWorktree — the main
@@ -21,15 +22,15 @@ func TestTeardown_mainWorktree_refused(t *testing.T) {
 
 	// Build a real upstream repo with a main branch.
 	remote := filepath.Join(root, "remote")
-	if err := os.MkdirAll(remote, 0o755); err != nil {
+	if err := os.MkdirAll(remote, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, remote, "init", "-b", "main")
-	if err := os.WriteFile(filepath.Join(remote, "go.mod"), []byte("module myapp\n\ngo 1.22\n"), 0o644); err != nil {
+	testutil.Git(t, remote, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(remote, "go.mod"), []byte("module myapp\n\ngo 1.22\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, remote, "add", ".")
-	runGit(t, remote, "commit", "-m", "init")
+	testutil.Git(t, remote, "add", ".")
+	testutil.Git(t, remote, "commit", "-m", "init")
 
 	projectsDir := filepath.Join(root, "projects")
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")

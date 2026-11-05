@@ -3,13 +3,13 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/git"
 	"github.com/xico42/codeherd/internal/herdtemplate"
 	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/semconv"
@@ -135,9 +135,7 @@ func resolveProjectFromDir(absDir string) string {
 
 // detectGitBranch runs git rev-parse to get the current branch name.
 func detectGitBranch(dir string) string {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, _, err := git.Run(dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return ""
 	}

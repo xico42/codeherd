@@ -3,26 +3,18 @@
 package cmd_test
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/xico42/codeherd/internal/testutil"
 )
 
 // TestTemplate_detectBranchFromGit verifies that when --branch is omitted, the
 // branch is auto-detected via git from the target directory. Requires git.
 func TestTemplate_detectBranchFromGit(t *testing.T) {
 	repoDir := t.TempDir()
-	for _, c := range [][]string{
-		{"git", "init", repoDir},
-		{"git", "-C", repoDir, "config", "user.email", "test@test.com"},
-		{"git", "-C", repoDir, "config", "user.name", "Test"},
-		{"git", "-C", repoDir, "checkout", "-b", "my-branch"},
-		{"git", "-C", repoDir, "commit", "--allow-empty", "-m", "init"},
-	} {
-		if out, err := exec.Command(c[0], c[1:]...).CombinedOutput(); err != nil {
-			t.Fatalf("git setup %v: %v\n%s", c, err, out)
-		}
-	}
+	testutil.InitRepo(t, repoDir)
+	testutil.Git(t, repoDir, "checkout", "-b", "my-branch")
 
 	projectsDir := t.TempDir()
 	cfgPath := writeConfig(t, projectsDir)

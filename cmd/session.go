@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -31,7 +30,7 @@ var execTmuxAttach = func(name string) error {
 	if err != nil {
 		return fmt.Errorf("tmux not found: %w", err)
 	}
-	if err := syscall.Exec(tmuxBin, []string{"tmux", "attach-session", "-t", name}, os.Environ()); err != nil {
+	if err := syscallExec(tmuxBin, []string{"tmux", "attach-session", "-t", name}, os.Environ()); err != nil {
 		return fmt.Errorf("exec tmux: %w", err)
 	}
 	return nil

@@ -11,14 +11,9 @@ import (
 // runGit runs git in dir with a deterministic identity, failing the test on error.
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
-		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	full := append([]string{"-c", "user.name=test", "-c", "user.email=test@test"}, args...)
+	if _, stderr, err := Run(dir, full...); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, stderr)
 	}
 }
 
@@ -191,5 +186,69 @@ func TestRealRunner_Clone(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, "f.txt")); err != nil {
 		t.Errorf("cloned tree missing f.txt: %v", err)
+	}
+}
+
+func TestRealRunner_errorPaths(t *testing.T) {
+	clone := realRunnerRepos(t)
+	notARepo := t.TempDir()
+	r := NewRealRunner()
+	wt := func(name string) string { return filepath.Join(filepath.Dir(clone), name) }
+
+	if err := r.AddNewBranch(clone, wt("dup"), "main"); err == nil {
+		t.Error("AddNewBranch with an existing branch name should error")
+	}
+	if err := r.FetchAll(notARepo); err == nil {
+		t.Error("FetchAll outside a repo should error")
+	}
+	if err := r.FastForward(clone, "no-such-remote", "main"); err == nil {
+		t.Error("FastForward from a missing remote should error")
+	}
+	if _, err := r.ListRemoteBranches(notARepo); err == nil {
+		t.Error("ListRemoteBranches outside a repo should error")
+	}
+	if err := r.AddTracking(clone, wt("bad-track"), "bad", "origin/no-such-branch"); err == nil {
+		t.Error("AddTracking of a missing remote branch should error")
+	}
+	if _, err := r.HasLocalBranch(filepath.Join(notARepo, "absent"), "main"); err == nil {
+		t.Error("HasLocalBranch in a missing dir should report the failure to run git")
+	}
+}
+
+func TestRealRunner_FastForward_branchNotCheckedOut(t *testing.T) {
+	clone := realRunnerRepos(t)
+	runGit(t, clone, "branch", "feat-x", "origin/feat-x")
+
+	if err := NewRealRunner().FastForward(clone, "origin", "feat-x"); err != nil {
+		t.Errorf("FastForward: %v", err)
+	}
+}
+
+// The tests below guard against option injection: a branch or start point that
+// looks like a flag must reach git as an argument, never as an option.
+
+func TestRealRunner_Add_branchIsNotAnOption(t *testing.T) {
+	clone := realRunnerRepos(t)
+	wtPath := filepath.Join(filepath.Dir(clone), "wt")
+
+	if err := NewRealRunner().Add(clone, wtPath, "--detach"); err == nil {
+		t.Error("Add with branch \"--detach\" succeeded: it was parsed as an option")
+	}
+}
+
+func TestRealRunner_AddNewBranchFrom_startPointIsNotAnOption(t *testing.T) {
+	clone := realRunnerRepos(t)
+	wtPath := filepath.Join(filepath.Dir(clone), "wt")
+
+	if err := NewRealRunner().AddNewBranchFrom(clone, wtPath, "x", "--no-checkout"); err == nil {
+		t.Error("AddNewBranchFrom with start point \"--no-checkout\" succeeded: it was parsed as an option")
+	}
+}
+
+func TestRealRunner_Fetch_branchIsNotAnOption(t *testing.T) {
+	clone := realRunnerRepos(t)
+
+	if err := NewRealRunner().Fetch(clone, "origin", "--dry-run"); err == nil {
+		t.Error("Fetch with branch \"--dry-run\" succeeded: it was parsed as an option")
 	}
 }

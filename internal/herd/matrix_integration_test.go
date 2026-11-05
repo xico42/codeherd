@@ -5,12 +5,12 @@ package herd
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/git"
+	"github.com/xico42/codeherd/internal/testutil"
 	"github.com/xico42/codeherd/internal/tmux"
 )
 
@@ -21,7 +21,7 @@ import (
 func TestMatrix_LaunchAndResolve(t *testing.T) {
 	for _, col := range matrixProfiles {
 		t.Run(col.name, func(t *testing.T) {
-			socket := useIsolatedTmux(t)
+			testutil.IsolateTmux(t)
 			h, ref, _ := setupMatrixHerd(t, col.registry)
 
 			launched, err := h.Launch(ref, LaunchOpts{})
@@ -29,7 +29,7 @@ func TestMatrix_LaunchAndResolve(t *testing.T) {
 				t.Fatalf("Launch: %v", err)
 			}
 
-			if !tmuxHasSession(t, socket, ref.CanonicalName()) {
+			if !tmuxHasSession(t, ref.CanonicalName()) {
 				t.Fatalf("tmux server has no session %q after Launch", ref.CanonicalName())
 			}
 
@@ -55,7 +55,7 @@ func TestMatrix_LaunchAndResolve(t *testing.T) {
 func TestMatrix_StopSessions(t *testing.T) {
 	for _, col := range matrixProfiles {
 		t.Run(col.name, func(t *testing.T) {
-			socket := useIsolatedTmux(t)
+			testutil.IsolateTmux(t)
 			h, ref, _ := setupMatrixHerd(t, col.registry)
 
 			if _, err := h.Launch(ref, LaunchOpts{Type: SessionTypeAgent}); err != nil {
@@ -67,9 +67,9 @@ func TestMatrix_StopSessions(t *testing.T) {
 
 			agentName := ref.CanonicalName()
 			shellName := ref.CanonicalName() + "~sh" // == semconv.ShellSessionName(...)
-			if !tmuxHasSession(t, socket, agentName) || !tmuxHasSession(t, socket, shellName) {
+			if !tmuxHasSession(t, agentName) || !tmuxHasSession(t, shellName) {
 				t.Fatalf("precondition: expected both sessions running (agent=%v shell=%v)",
-					tmuxHasSession(t, socket, agentName), tmuxHasSession(t, socket, shellName))
+					tmuxHasSession(t, agentName), tmuxHasSession(t, shellName))
 			}
 
 			stopped, err := h.StopSessions(ref, StopOpts{All: true})
@@ -79,10 +79,10 @@ func TestMatrix_StopSessions(t *testing.T) {
 			if len(stopped) != 2 {
 				t.Errorf("StopSessions stopped %d sessions, want 2", len(stopped))
 			}
-			if tmuxHasSession(t, socket, agentName) {
+			if tmuxHasSession(t, agentName) {
 				t.Errorf("agent session %q survived StopSessions", agentName)
 			}
-			if tmuxHasSession(t, socket, shellName) {
+			if tmuxHasSession(t, shellName) {
 				t.Errorf("shell session %q survived StopSessions", shellName)
 			}
 		})
@@ -102,37 +102,13 @@ var matrixProfiles = []struct {
 	{"profile on", &config.ProfileRegistry{Active: "work"}},
 }
 
-// useIsolatedTmux gives the calling test a private tmux server reached via a
-// socket under t.TempDir(). It sets CODEHERD_TMUX_SOCKET so the Herd's real
-// tmux runner targets the same server, clears $TMUX so new-session does not
-// think it is nested, probes once, and t.Skips when tmux cannot daemonize
-// (missing binary or sandboxed CI). The server is killed on cleanup so the
-// socket — and any sleep processes the sessions started — disappear with the
-// TempDir. Returns the socket path for direct tmux assertions.
-func useIsolatedTmux(t *testing.T) string {
-	t.Helper()
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
-	socket := filepath.Join(t.TempDir(), "tmux.sock")
-	t.Setenv(tmux.SocketEnvVar, socket)
-	t.Setenv("TMUX", "")
-	probe := exec.Command("tmux", "-S", socket, "new-session", "-d", "-s", "__probe__", "sleep", "30")
-	if out, err := probe.CombinedOutput(); err != nil {
-		t.Skipf("tmux daemonize unavailable: %v\n%s", err, out)
-	}
-	t.Cleanup(func() {
-		_ = exec.Command("tmux", "-S", socket, "kill-server").Run()
-	})
-	return socket
-}
-
 // tmuxHasSession reports whether the isolated server has an exactly-named
 // session. The "=" target prefix forces an exact match so an agent session
 // (work-myapp-feat) is never confused with its shell (work-myapp-feat~sh).
-func tmuxHasSession(t *testing.T, socket, name string) bool {
+func tmuxHasSession(t *testing.T, name string) bool {
 	t.Helper()
-	return exec.Command("tmux", "-S", socket, "has-session", "-t", "="+name).Run() == nil
+	_, ok := testutil.Tmux(t, "has-session", "-t", "="+name)
+	return ok
 }
 
 // setupMatrixHerd builds a Herd wired to REAL tmux and REAL git for the given
@@ -145,23 +121,23 @@ func setupMatrixHerd(t *testing.T, registry *config.ProfileRegistry) (*Herd, Ref
 
 	// A tiny upstream repo with a single commit on main.
 	remote := filepath.Join(root, "remote")
-	if err := os.MkdirAll(remote, 0o755); err != nil {
+	if err := os.MkdirAll(remote, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, remote, "init", "-b", "main")
-	if err := os.WriteFile(filepath.Join(remote, "README.md"), []byte("hi\n"), 0o644); err != nil {
+	testutil.Git(t, remote, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(remote, "README.md"), []byte("hi\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, remote, "add", ".")
-	runGit(t, remote, "commit", "-m", "init")
+	testutil.Git(t, remote, "add", ".")
+	testutil.Git(t, remote, "commit", "-m", "init")
 
 	// Clone into the codeherd layout: <projectsDir>/github.com/user/myapp.
 	projectsDir := filepath.Join(root, "projects")
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(filepath.Dir(cloneDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cloneDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, root, "clone", remote, cloneDir)
+	testutil.Git(t, root, "clone", remote, cloneDir)
 
 	cfg := &config.Config{
 		Defaults: config.DefaultsConfig{ProjectsDir: projectsDir, Agent: "agent"},
@@ -190,13 +166,13 @@ func setupMatrixHerd(t *testing.T, registry *config.ProfileRegistry) (*Herd, Ref
 func TestMatrix_Teardown(t *testing.T) {
 	for _, col := range matrixProfiles {
 		t.Run(col.name, func(t *testing.T) {
-			socket := useIsolatedTmux(t)
+			testutil.IsolateTmux(t)
 			h, ref, wtPath := setupMatrixHerd(t, col.registry)
 
 			if _, err := h.Launch(ref, LaunchOpts{}); err != nil {
 				t.Fatalf("Launch: %v", err)
 			}
-			if !tmuxHasSession(t, socket, ref.CanonicalName()) {
+			if !tmuxHasSession(t, ref.CanonicalName()) {
 				t.Fatalf("precondition: session %q not running", ref.CanonicalName())
 			}
 
@@ -204,7 +180,7 @@ func TestMatrix_Teardown(t *testing.T) {
 				t.Fatalf("Teardown: %v", err)
 			}
 
-			if tmuxHasSession(t, socket, ref.CanonicalName()) {
+			if tmuxHasSession(t, ref.CanonicalName()) {
 				t.Errorf("session %q survived Teardown (orphaned agent)", ref.CanonicalName())
 			}
 			if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
@@ -220,7 +196,7 @@ func TestMatrix_Teardown(t *testing.T) {
 func TestMatrix_TeardownRefusesRunning(t *testing.T) {
 	for _, col := range matrixProfiles {
 		t.Run(col.name, func(t *testing.T) {
-			socket := useIsolatedTmux(t)
+			testutil.IsolateTmux(t)
 			h, ref, wtPath := setupMatrixHerd(t, col.registry)
 
 			if _, err := h.Launch(ref, LaunchOpts{}); err != nil {
@@ -231,7 +207,7 @@ func TestMatrix_TeardownRefusesRunning(t *testing.T) {
 			if !errors.Is(err, ErrSessionRunning) {
 				t.Fatalf("Teardown(Force:false) err = %v, want ErrSessionRunning", err)
 			}
-			if !tmuxHasSession(t, socket, ref.CanonicalName()) {
+			if !tmuxHasSession(t, ref.CanonicalName()) {
 				t.Errorf("session %q was killed despite refusal", ref.CanonicalName())
 			}
 			if _, err := os.Stat(wtPath); err != nil {

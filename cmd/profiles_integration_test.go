@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/testutil"
 )
 
 func setupProfilesTree(t *testing.T) (mainPath string) {
@@ -154,14 +155,14 @@ profiles_dir = "` + filepath.Join(filepath.Dir(main), "profiles") + `"
 }
 
 func TestProfiles_sessionIsolationAcrossProfiles(t *testing.T) {
-	useIsolatedTmux(t)
+	testutil.IsolateTmux(t)
 
 	main := setupProfilesTree(t)
 	root := filepath.Dir(main)
 	personalProjects := filepath.Join(root, "personal-projects")
 	workProjects := filepath.Join(root, "work-projects")
-	initBareRepo(t, filepath.Join(personalProjects, "github.com", "u", "myapp"))
-	initBareRepo(t, filepath.Join(workProjects, "github.com", "u", "other"))
+	testutil.InitRepo(t, filepath.Join(personalProjects, "github.com", "u", "myapp"))
+	testutil.InitRepo(t, filepath.Join(workProjects, "github.com", "u", "other"))
 
 	if err := runCmd(t, "--config", main, "--profile", "personal", "create", "session", "myapp", "feat"); err != nil {
 		t.Fatalf("personal create session: %v", err)
@@ -177,7 +178,7 @@ func TestProfiles_sessionIsolationAcrossProfiles(t *testing.T) {
 		t.Errorf("personal list session out = %q, want myapp only", out)
 	}
 
-	tmuxOut, _ := tmuxCmd(t, "ls").Output()
+	tmuxOut, _ := testutil.Tmux(t, "ls")
 	if !strings.Contains(string(tmuxOut), "personal-myapp-feat") {
 		t.Errorf("tmux ls did not show personal-myapp-feat:\n%s", tmuxOut)
 	}
@@ -188,15 +189,13 @@ func TestProfiles_sessionIsolationAcrossProfiles(t *testing.T) {
 
 func TestProfiles_strayKeysWarning(t *testing.T) {
 	main := setupProfilesTree(t)
-	f, err := os.OpenFile(main, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
+	body := testutil.ReadFile(t, filepath.Dir(main), filepath.Base(main))
+	body = append(body, "\n[projects.foo]\nrepo = \"git@x:foo\"\n"...)
+	if err := os.WriteFile(main, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString("\n[projects.foo]\nrepo = \"git@x:foo\"\n"); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
 
+	var err error
 	stderr := captureStderr(t, func() {
 		err = runCmd(t, "--config", main, "--profile", "personal", "list", "project")
 	})

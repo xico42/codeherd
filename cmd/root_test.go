@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -14,7 +15,10 @@ func runCmd(t *testing.T, args ...string) error {
 	orig := os.Args
 	os.Args = append([]string{"ch"}, args...)
 	defer func() { os.Args = orig }()
-	return cmd.Execute("test")
+	if err := cmd.Execute("test"); err != nil {
+		return fmt.Errorf("execute %v: %w", args, err)
+	}
+	return nil
 }
 
 // TestExecute_Help exercises Execute() and all init() registrations by

@@ -1,30 +1,59 @@
 version: "2"
+run:
+  # lint the integration tests too
+  build-tags:
+    - integration
 linters:
+  default: none
   enable:
+    # the "standard" default set, listed explicitly
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # extras
     - gosec
     - misspell
+    - modernize
     - wrapcheck
+
+    # complexity
+    - gocognit
+    - gocyclo
+    - maintidx
+    - nestif
+    - revive
+
+    # nolint hygiene
+    - nolintlint
   settings:
     staticcheck:
       checks:
         - all
-        - -QF*
+    gocyclo:
+      # classic McCabe threshold
+      min-complexity: 10
+    revive:
+      # Only this rule: nesting depth across if/for/switch, which nestif misses.
+      rules:
+        - name: max-control-nesting
+          arguments: [2]
+    nolintlint:
+      # Every //nolint names a linter and a reason, and is flagged once unneeded.
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
   exclusions:
-    generated: lax
-    presets:
-      - comments
-      - common-false-positives
-      - legacy
-      - std-error-handling
     rules:
-      - linters:
-          - gosec
-          - wrapcheck
-        path: _test\.go
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
+      # Table-driven tests branch per case by design.
+      - path: _test\.go
+        linters:
+          - gocognit
+          - gocyclo
+          - maintidx
+          - nestif
 formatters:
   enable:
     - goimports
@@ -32,9 +61,3 @@ formatters:
     goimports:
       local-prefixes:
         - github.com/xico42/codeherd
-  exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$

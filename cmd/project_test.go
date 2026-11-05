@@ -113,7 +113,7 @@ func TestShowProject_cloned(t *testing.T) {
 	cfgPath := writeConfig(t, projectsDir)
 	// Simulate a cloned project by creating the expected directory path.
 	repoDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+	if err := os.MkdirAll(repoDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := runCmd(t, "--config", cfgPath, "show", "project", "myapp"); err != nil {
@@ -128,7 +128,7 @@ func TestCloneProject_allAlreadyCloned(t *testing.T) {
 	cfgPath := writeConfig(t, projectsDir)
 	// Pre-create the project directory so Clone returns AlreadyClonedError.
 	repoDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+	if err := os.MkdirAll(repoDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := runCmd(t, "--config", cfgPath, "clone", "project", "--all"); err != nil {
@@ -142,7 +142,7 @@ func TestCloneProject_singleAlreadyCloned(t *testing.T) {
 	projectsDir := t.TempDir()
 	cfgPath := writeConfig(t, projectsDir)
 	repoDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+	if err := os.MkdirAll(repoDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := runCmd(t, "--config", cfgPath, "clone", "project", "myapp"); err != nil {

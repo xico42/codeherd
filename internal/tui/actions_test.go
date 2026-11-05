@@ -11,8 +11,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/xico42/codeherd/internal/config"
+	"github.com/xico42/codeherd/internal/git"
 	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/semconv"
+	"github.com/xico42/codeherd/internal/testutil"
 	"github.com/xico42/codeherd/internal/tmux"
 )
 
@@ -27,7 +29,7 @@ func tuiHerd(t *testing.T, runner tmux.Runner, branch string) (*herd.Herd, *conf
 		Projects: map[string]config.ProjectConfig{"myapp": {Repo: "git@github.com:user/myapp.git"}},
 	}
 	wt := filepath.Join(dir, "github.com", "user", "myapp__worktrees", semconv.FlattenBranch(branch))
-	if err := os.MkdirAll(wt, 0o755); err != nil {
+	if err := os.MkdirAll(wt, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return herd.New(cfg, nil, herd.Deps{Tmux: runner}), cfg
@@ -1198,5 +1200,106 @@ func TestModel_Update_worktreeCreatedMsg_withAttachAndAgent(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("worktreeCreatedMsg with attach+agent should return non-nil cmd")
+	}
+}
+
+// failingListRunner is a tmux runner whose list-sessions fails, so any
+// operation that resolves sessions first errors out.
+type failingListRunner struct{}
+
+func (failingListRunner) Run(args ...string) (string, string, int, error) {
+	if args[0] == "list-sessions" {
+		return "", "server exploded", 2, nil
+	}
+	return "", "", 0, nil
+}
+
+func singleAgentModel(hrd *herd.Herd, cfg *config.Config, item Item) Model {
+	cfg.Agents = map[string]config.AgentConfig{"claude": {Cmd: "claude"}}
+	m := Model{screen: screenList, cfg: cfg, herd: hrd}
+	m.list = newList([]list.Item{item})
+	return m
+}
+
+func TestAttachAction_worktreeGroup_singleAgent_launches(t *testing.T) {
+	hrd, cfg := tuiHerd(t, &recordingRunner{}, "feat")
+	m := singleAgentModel(hrd, cfg, Item{Project: "myapp", Branch: "feat", Ref: hrd.Ref("myapp", "feat"), Group: groupWorktree})
+
+	_, cmd := m.attachAction()
+	if msg, ok := cmd().(attachMsg); !ok {
+		t.Errorf("cmd() = %#v, want attachMsg", msg)
+	}
+}
+
+func TestAttachAction_worktreeGroup_singleAgent_launchError(t *testing.T) {
+	hrd, cfg := tuiHerd(t, failingListRunner{}, "feat")
+	m := singleAgentModel(hrd, cfg, Item{Project: "myapp", Branch: "feat", Ref: hrd.Ref("myapp", "feat"), Group: groupWorktree})
+
+	_, cmd := m.attachAction()
+	if msg, ok := cmd().(errMsg); !ok || msg.err == nil {
+		t.Errorf("cmd() = %#v, want errMsg", msg)
+	}
+}
+
+func TestAttachAction_projectGroup_singleAgent_launchesOnDefaultBranch(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: dir},
+		Projects: map[string]config.ProjectConfig{"myapp": {Repo: "git@github.com:user/myapp.git", DefaultBranch: "main"}},
+	}
+	testutil.InitRepo(t, filepath.Join(dir, "github.com", "user", "myapp"))
+	hrd := herd.New(cfg, nil, herd.Deps{Tmux: &recordingRunner{}, Git: git.NewRealRunner()})
+	m := singleAgentModel(hrd, cfg, Item{Project: "myapp", Group: groupProject})
+
+	_, cmd := m.attachAction()
+	if msg, ok := cmd().(attachMsg); !ok {
+		t.Errorf("cmd() = %#v, want attachMsg (the main worktree already exists)", msg)
+	}
+}
+
+func TestAttachAction_projectGroup_singleAgent_ensureError(t *testing.T) {
+	hrd, cfg := tuiHerd(t, &recordingRunner{}, "feat")
+	m := singleAgentModel(hrd, cfg, Item{Project: "ghost", Group: groupProject}) // not configured
+
+	_, cmd := m.attachAction()
+	if msg, ok := cmd().(errMsg); !ok || msg.err == nil {
+		t.Errorf("cmd() = %#v, want errMsg", msg)
+	}
+}
+
+func TestAttachAction_projectGroup_singleAgent_launchError(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{ProjectsDir: dir},
+		Projects: map[string]config.ProjectConfig{"myapp": {Repo: "git@github.com:user/myapp.git", DefaultBranch: "main"}},
+	}
+	testutil.InitRepo(t, filepath.Join(dir, "github.com", "user", "myapp"))
+	hrd := herd.New(cfg, nil, herd.Deps{Tmux: failingListRunner{}, Git: git.NewRealRunner()})
+	m := singleAgentModel(hrd, cfg, Item{Project: "myapp", Group: groupProject})
+
+	_, cmd := m.attachAction()
+	if msg, ok := cmd().(errMsg); !ok || msg.err == nil {
+		t.Errorf("cmd() = %#v, want errMsg", msg)
+	}
+}
+
+func TestAttachAction_unknownGroup_doesNothing(t *testing.T) {
+	m := Model{screen: screenList, cfg: &config.Config{}}
+	m.list = newList([]list.Item{Item{Project: "myapp", Group: 0}})
+
+	if _, cmd := m.attachAction(); cmd != nil {
+		t.Error("attachAction on an item with no group should return a nil cmd")
+	}
+}
+
+func TestConfirmView_agentWithoutStatusShowsActive(t *testing.T) {
+	c := &confirmModel{target: Item{Project: "myapp", Branch: "feat", HasAgent: true, HasShell: true}}
+
+	view := c.View()
+	if !strings.Contains(view, "Agent session (active)") {
+		t.Errorf("view does not show the agent as active:\n%s", view)
+	}
+	if !strings.Contains(view, "Shell session (running)") {
+		t.Errorf("view does not show the shell session:\n%s", view)
 	}
 }

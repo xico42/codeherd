@@ -83,8 +83,8 @@ func mergeEnv(current []string, overrides map[string]string) []string {
 
 	existing := make(map[string]int, len(result))
 	for i, entry := range result {
-		if idx := strings.Index(entry, "="); idx >= 0 {
-			existing[entry[:idx]] = i
+		if before, _, ok := strings.Cut(entry, "="); ok {
+			existing[before] = i
 		}
 	}
 

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"text/tabwriter"
 
@@ -153,14 +152,9 @@ func (c *DeleteWorktreeCmd) Run(cmd *cobra.Command, args []string) error {
 	project, branch := args[0], args[1]
 	out := newPrinter(cmd.OutOrStdout())
 
-	if !c.Force {
-		out.Printf("Delete worktree %s/%s? [y/N] ", project, branch)
-		scanner := bufio.NewScanner(cmd.InOrStdin())
-		scanner.Scan()
-		if scanner.Text() != "y" && scanner.Text() != "Y" {
-			out.Println("Aborted.")
-			return out.Err()
-		}
+	if !c.Force && !confirm(cmd, out, fmt.Sprintf("Delete worktree %s/%s?", project, branch)) {
+		out.Println("Aborted.")
+		return out.Err()
 	}
 
 	out.Printf("Deleting worktree %s/%s...  ", project, branch)

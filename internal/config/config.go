@@ -1,3 +1,5 @@
+// Package config loads codeherd's TOML configuration and profiles. A missing
+// config file is not an error: Load returns an empty Config.
 package config
 
 import (

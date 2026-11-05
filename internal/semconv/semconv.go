@@ -1,3 +1,5 @@
+// Package semconv holds codeherd's naming conventions: session names, tmux
+// option keys, environment variables, and filesystem paths.
 package semconv
 
 import (

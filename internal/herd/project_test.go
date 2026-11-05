@@ -99,7 +99,7 @@ func TestShow_ClonedTrue_WhenPathExists(t *testing.T) {
 	})
 	// Create the expected path so Cloned=true
 	expectedPath := dir + "/github.com/user/myapp"
-	if err := os.MkdirAll(expectedPath, 0o755); err != nil {
+	if err := os.MkdirAll(expectedPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	e, err := h.Project("myapp")
@@ -146,7 +146,7 @@ func TestClone_AlreadyCloned(t *testing.T) {
 	})
 	// Pre-create the target path
 	targetPath := dir + "/github.com/user/myapp"
-	if err := os.MkdirAll(targetPath, 0o755); err != nil {
+	if err := os.MkdirAll(targetPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	err := h.Clone("myapp")

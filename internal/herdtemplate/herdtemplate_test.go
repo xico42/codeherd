@@ -14,7 +14,7 @@ import (
 
 func TestProcess_RendersHerdFiles(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte("PORT={{ port \"http\" }}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte("PORT={{ port \"http\" }}\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -37,7 +37,7 @@ func TestProcess_RendersHerdFiles(t *testing.T) {
 
 func TestProcess_StripsHerdSuffix(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml.herd"), []byte("version: '3'\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml.herd"), []byte("version: '3'\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -59,7 +59,7 @@ func TestProcess_StripsHerdSuffix(t *testing.T) {
 
 func TestProcess_NoHerdFiles_NoOp(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -78,7 +78,7 @@ func TestProcess_NoHerdFiles_NoOp(t *testing.T) {
 func TestProcess_TemplateContext(t *testing.T) {
 	dir := t.TempDir()
 	tmpl := "project={{ .Project }}\nbranch={{ .Branch }}\npath={{ .WorktreePath }}\nsession={{ .SessionName }}\n"
-	if err := os.WriteFile(filepath.Join(dir, "info.txt.herd"), []byte(tmpl), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "info.txt.herd"), []byte(tmpl), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestProcess_TemplateContext(t *testing.T) {
 
 func TestProcess_PortFunction(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "ports.herd"), []byte(`{{ port "http" }}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ports.herd"), []byte(`{{ port "http" }}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -126,7 +126,7 @@ func TestProcess_PortFunction(t *testing.T) {
 
 func TestProcess_TriggersHooks(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte("ok"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte("ok"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -157,7 +157,7 @@ func TestProcess_TriggersHooks(t *testing.T) {
 
 func TestProcess_PreHookFailureStops(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte("ok"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte("ok"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -181,7 +181,7 @@ func TestProcess_PreHookFailureStops(t *testing.T) {
 
 func TestProcess_BadTemplate(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "bad.herd"), []byte("{{ .Invalid | bad }}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "bad.herd"), []byte("{{ .Invalid | bad }}"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -202,7 +202,7 @@ func TestProcess_BadTemplate(t *testing.T) {
 // string, not a function.
 func TestProcess_ExecuteError(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "bad_exec.herd"), []byte(`{{ call .Project }}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "bad_exec.herd"), []byte(`{{ call .Project }}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -278,7 +278,7 @@ func TestDeterministicPortWithSeed_DifferentSeeds(t *testing.T) {
 
 func TestProcess_EnvFunction_NoArgs(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env }}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env }}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -300,7 +300,7 @@ func TestProcess_EnvFunction_NoArgs(t *testing.T) {
 
 func TestProcess_EnvFunction_WithDefault(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env "CODEHERD_TEST_UNSET_VAR_XYZ" "fallback" }}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env "CODEHERD_TEST_UNSET_VAR_XYZ" "fallback" }}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -322,7 +322,7 @@ func TestProcess_EnvFunction_WithDefault(t *testing.T) {
 
 func TestProcess_EnvFunction_VarSet(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env "CODEHERD_TEST_VAR" "default" }}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env "CODEHERD_TEST_VAR" "default" }}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -346,7 +346,7 @@ func TestProcess_EnvFunction_VarSet(t *testing.T) {
 
 func TestProcess_EnvFunction_VarNotSet_NoDefault(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env "CODEHERD_TEST_UNSET_VAR_XYZ" }}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte(`{{ env "CODEHERD_TEST_UNSET_VAR_XYZ" }}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -368,7 +368,7 @@ func TestProcess_EnvFunction_VarNotSet_NoDefault(t *testing.T) {
 
 func TestProcess_PostHookFailure(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte("ok"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte("ok"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -400,7 +400,7 @@ func TestProcess_InvalidDirectory(t *testing.T) {
 
 func TestProcess_DryRun_DoesNotWriteFiles(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte("PORT={{ port \"http\" }}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte("PORT={{ port \"http\" }}\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -433,7 +433,7 @@ func TestProcess_DryRun_DoesNotWriteFiles(t *testing.T) {
 
 func TestProcess_DryRun_SkipsHooks(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte("ok"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test.herd"), []byte("ok"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -457,10 +457,10 @@ func TestProcess_DryRun_SkipsHooks(t *testing.T) {
 
 func TestProcess_ReturnsProcessResult(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "a.txt.herd"), []byte("hello {{ .Project }}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "a.txt.herd"), []byte("hello {{ .Project }}"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "b.yml.herd"), []byte("version: 3"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "b.yml.herd"), []byte("version: 3"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -482,10 +482,10 @@ func TestProcess_ReturnsProcessResult(t *testing.T) {
 
 func TestProcess_PortFunction_StableAcrossFiles(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "a.env.herd"), []byte(`{{ port "shared" }}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "a.env.herd"), []byte(`{{ port "shared" }}`), 0o600); err != nil {
 		t.Fatalf("WriteFile a: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "b.env.herd"), []byte(`{{ port "shared" }}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "b.env.herd"), []byte(`{{ port "shared" }}`), 0o600); err != nil {
 		t.Fatalf("WriteFile b: %v", err)
 	}
 
@@ -515,7 +515,7 @@ func TestProcess_PortFunction_StableAcrossFiles(t *testing.T) {
 func TestProcess_PortCollision_ResolvedByAltHash(t *testing.T) {
 	dir := t.TempDir()
 	tmpl := `svc295={{ port "svc295" }}` + "\n" + `svc758={{ port "svc758" }}` + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "ports.env.herd"), []byte(tmpl), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ports.env.herd"), []byte(tmpl), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 

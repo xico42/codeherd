@@ -3,6 +3,7 @@ package herd
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 	"time"
@@ -57,29 +58,13 @@ func (h *Herd) Launch(ref Ref, opts LaunchOpts) (Handle, error) {
 		opts.Type = SessionTypeAgent
 	}
 
-	// Scope the existence check to (ref, type) so agent and shell sessions coexist.
-	switch _, err := h.Resolve(ref, opts.Type); {
-	case err == nil:
-		return Handle{}, &SessionExistsError{Ref: ref, Type: opts.Type}
-	case !errors.Is(err, ErrSessionNotFound):
+	if err := h.ensureNoSession(ref, opts.Type); err != nil {
 		return Handle{}, err
 	}
-
-	path, err := h.worktreePath(ref)
+	path, cloneDir, err := h.sessionDirs(ref)
 	if err != nil {
 		return Handle{}, err
 	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return Handle{}, fmt.Errorf("%w: %s", ErrPathNotFound, path)
-		}
-		return Handle{}, fmt.Errorf("checking worktree path: %w", err)
-	}
-	cloneDir, err := h.cloneDir(ref.Project)
-	if err != nil {
-		return Handle{}, err
-	}
-
 	cmd, env, err := h.sessionCommand(opts)
 	if err != nil {
 		return Handle{}, err
@@ -97,40 +82,15 @@ func (h *Herd) Launch(ref Ref, opts LaunchOpts) (Handle, error) {
 		return Handle{}, fmt.Errorf("pre-session hook: %w", err)
 	}
 
-	sessionEnv := make(map[string]string, len(env)+6)
-	for k, v := range env {
-		sessionEnv[k] = v
-	}
-	// Codeherd-stamped vars win over user-supplied Env.
-	sessionEnv[semconv.SessionEnvVar] = canonical
-	sessionEnv[semconv.HookAttrProject] = ref.Project
-	sessionEnv[semconv.HookAttrBranch] = ref.Branch
-	sessionEnv[semconv.HookAttrWorktreePath] = path
-	if cloneDir != "" {
-		sessionEnv[semconv.HookAttrCloneDir] = cloneDir
-	}
-	if ref.Profile != "" {
-		sessionEnv[semconv.EnvProfile] = ref.Profile
-	}
-
 	// Capture the session ID atomically at creation; a separate
 	// display-message round-trip would race with short-lived commands.
 	tmuxName := ref.tmuxName(opts.Type)
-	id, err := h.tmux.NewSessionWithEnv(tmuxName, path, sessionEnv, cmd)
+	id, err := h.tmux.NewSessionWithEnv(tmuxName, path, sessionEnv(ref, env, path, cloneDir), cmd)
 	if err != nil {
 		return Handle{}, fmt.Errorf("creating tmux session: %w", err)
 	}
-
 	now := time.Now().UTC()
-	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionStatus, semconv.StatusRunning)
-	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionStartedAt, now.Format(time.RFC3339))
-	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionCanonicalName, canonical)
-	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionSessionType, string(opts.Type))
-	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionBranch, ref.Branch)
-	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionProject, ref.Project)
-	if ref.Profile != "" {
-		_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionProfile, ref.Profile)
-	}
+	h.stampSession(tmuxName, ref, opts.Type, now)
 
 	if err := hook.Trigger(semconv.HookPostSession, attrs, path); err != nil {
 		return Handle{}, fmt.Errorf("post-session hook: %w", err)
@@ -144,6 +104,74 @@ func (h *Herd) Launch(ref Ref, opts LaunchOpts) (Handle, error) {
 		Status:    StatusRunning,
 		StartedAt: now,
 	}, nil
+}
+
+// ensureNoSession fails with *SessionExistsError when ref already has a
+// session of type t. The check is scoped to (ref, type) so agent and shell
+// sessions coexist.
+func (h *Herd) ensureNoSession(ref Ref, t SessionType) error {
+	_, err := h.Resolve(ref, t)
+	switch {
+	case err == nil:
+		return &SessionExistsError{Ref: ref, Type: t}
+	case errors.Is(err, ErrSessionNotFound):
+		return nil
+	default:
+		return err
+	}
+}
+
+// sessionDirs returns the worktree a session for ref runs in, which must
+// exist, and the project's clone dir.
+func (h *Herd) sessionDirs(ref Ref) (path, cloneDir string, err error) {
+	path, err = h.worktreePath(ref)
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return "", "", fmt.Errorf("%w: %s", ErrPathNotFound, path)
+		}
+		return "", "", fmt.Errorf("checking worktree path: %w", err)
+	}
+	cloneDir, err = h.cloneDir(ref.Project)
+	if err != nil {
+		return "", "", err
+	}
+	return path, cloneDir, nil
+}
+
+// sessionEnv is the agent's env plus the CODEHERD_* vars documented on Launch.
+// The codeherd-stamped vars win over user-supplied ones.
+func sessionEnv(ref Ref, env map[string]string, path, cloneDir string) map[string]string {
+	out := make(map[string]string, len(env)+6)
+	maps.Copy(out, env)
+	out[semconv.SessionEnvVar] = ref.CanonicalName()
+	out[semconv.HookAttrProject] = ref.Project
+	out[semconv.HookAttrBranch] = ref.Branch
+	out[semconv.HookAttrWorktreePath] = path
+	if cloneDir != "" {
+		out[semconv.HookAttrCloneDir] = cloneDir
+	}
+	if ref.Profile != "" {
+		out[semconv.EnvProfile] = ref.Profile
+	}
+	return out
+}
+
+// stampSession records a new session's metadata as tmux user options, which
+// is where codeherd keeps session state. It is best-effort: the session is
+// already running, so a failed stamp is not worth failing the launch over.
+func (h *Herd) stampSession(tmuxName string, ref Ref, t SessionType, startedAt time.Time) {
+	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionStatus, semconv.StatusRunning)
+	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionStartedAt, startedAt.Format(time.RFC3339))
+	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionCanonicalName, ref.CanonicalName())
+	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionSessionType, string(t))
+	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionBranch, ref.Branch)
+	_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionProject, ref.Project)
+	if ref.Profile != "" {
+		_ = h.tmux.SetOption(tmuxName, semconv.TmuxOptionProfile, ref.Profile)
+	}
 }
 
 // sessionCommand resolves the command and env a session runs with. A shell
@@ -253,28 +281,39 @@ func (h *Herd) SetStatus(canonicalName string, status Status, annotation string)
 		return nil
 	}
 
-	records, _ := h.tmux.ListSessions()
-	actualName := ""
-	for _, r := range records {
-		if r.CanonicalName == canonicalName && SessionType(r.SessionType) == SessionTypeAgent {
-			actualName = r.Name
-			break
-		}
-	}
+	actualName := h.agentTmuxName(canonicalName)
 	if actualName == "" {
 		return nil // session not found — suppress
 	}
 
 	_ = h.tmux.SetOption(actualName, semconv.TmuxOptionStatus, string(status))
 	_ = h.tmux.SetOption(actualName, semconv.TmuxOptionAnnotation, annotation)
-
-	hasPrefix := strings.HasPrefix(actualName, semconv.StatusPrefix)
-	if status == StatusRunning && hasPrefix {
-		_ = h.tmux.RenameSession(actualName, strings.TrimPrefix(actualName, semconv.StatusPrefix))
-	} else if status != StatusRunning && !hasPrefix {
-		_ = h.tmux.RenameSession(actualName, semconv.StatusPrefix+actualName)
-	}
+	h.syncStatusPrefix(actualName, status)
 	return nil
+}
+
+// agentTmuxName returns the current tmux name of the agent session with the
+// given canonical name — which differs from it while the status prefix is on —
+// or "" when there is no such session.
+func (h *Herd) agentTmuxName(canonicalName string) string {
+	records, _ := h.tmux.ListSessions()
+	for _, r := range records {
+		if r.CanonicalName == canonicalName && SessionType(r.SessionType) == SessionTypeAgent {
+			return r.Name
+		}
+	}
+	return ""
+}
+
+// syncStatusPrefix renames the session so its name carries the status prefix
+// exactly when it is not running.
+func (h *Herd) syncStatusPrefix(tmuxName string, status Status) {
+	hasPrefix := strings.HasPrefix(tmuxName, semconv.StatusPrefix)
+	if status == StatusRunning && hasPrefix {
+		_ = h.tmux.RenameSession(tmuxName, strings.TrimPrefix(tmuxName, semconv.StatusPrefix))
+	} else if status != StatusRunning && !hasPrefix {
+		_ = h.tmux.RenameSession(tmuxName, semconv.StatusPrefix+tmuxName)
+	}
 }
 
 // handles lists every codeherd session tmux knows about, across all profiles.

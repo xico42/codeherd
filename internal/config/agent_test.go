@@ -19,7 +19,7 @@ args = ["--dangerously-skip-permissions"]
 [agents.claude.env]
 CLAUDE_CONFIG_DIR = "/custom"
 `
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := config.Load(cfgPath, "")
@@ -48,7 +48,7 @@ func TestAgentByName_notFound(t *testing.T) {
 [agents.claude]
 cmd = "claude"
 `
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := config.Load(cfgPath, "")
@@ -85,7 +85,7 @@ cmd = "aider"
 [agents.claude]
 cmd = "claude"
 `
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := config.Load(cfgPath, "")

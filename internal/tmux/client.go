@@ -1,3 +1,4 @@
+// Package tmux is a typed wrapper around the tmux command line.
 package tmux
 
 import (
@@ -244,7 +245,7 @@ func (c *Client) ListSessions() ([]SessionRecord, error) {
 		return nil, fmt.Errorf("tmux list-sessions: %s", strings.TrimSpace(stderr))
 	}
 	var records []SessionRecord
-	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(stdout), "\n") {
 		if line == "" {
 			continue
 		}

@@ -21,7 +21,7 @@ func itemsHerd(t *testing.T, cloned map[string]bool) *herd.Herd {
 	for name, isCloned := range cloned {
 		projects[name] = config.ProjectConfig{Repo: "git@github.com:user/" + name + ".git"}
 		if isCloned {
-			if err := os.MkdirAll(filepath.Join(dir, "github.com", "user", name), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Join(dir, "github.com", "user", name), 0o700); err != nil {
 				t.Fatal(err)
 			}
 		}

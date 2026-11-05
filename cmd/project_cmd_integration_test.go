@@ -103,3 +103,15 @@ func TestCloneProject_all_reportsFailuresOnStderr(t *testing.T) {
 		t.Errorf("stderr = %q, want the per-project failure", errOut)
 	}
 }
+
+func TestCloneProject_single_failureReturnsError(t *testing.T) {
+	setupCloneHerd(t, filepath.Join(t.TempDir(), "does-not-exist"))
+
+	out, _, err := runCloneProject(t, []string{"myapp"}, false)
+	if err == nil || !strings.Contains(err.Error(), "failed to clone myapp") {
+		t.Fatalf("Run() = %v, want the clone failure", err)
+	}
+	if out != "Cloning myapp... \n" {
+		t.Errorf("output = %q, want the progress line terminated by a newline", out)
+	}
+}

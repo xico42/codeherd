@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/xico42/codeherd/internal/tmux"
@@ -12,6 +14,7 @@ type mockResponse struct {
 	stdout   string
 	stderr   string
 	exitCode int
+	err      error // tmux could not be run at all
 }
 
 // multiMockRunner returns different responses for sequential calls.
@@ -26,7 +29,7 @@ func (m *multiMockRunner) Run(args ...string) (string, string, int, error) {
 	if m.callIdx < len(m.responses) {
 		r := m.responses[m.callIdx]
 		m.callIdx++
-		return r.stdout, r.stderr, r.exitCode, nil
+		return r.stdout, r.stderr, r.exitCode, r.err
 	}
 	return "", "", 0, nil
 }
@@ -316,5 +319,52 @@ func TestRunTUIInTmux_NewSessionError(t *testing.T) {
 	err := runTUIInTmux(tc)
 	if err == nil {
 		t.Error("expected error when NewSessionWithCmd fails")
+	}
+}
+
+func TestRunTUIInTmux_failures(t *testing.T) {
+	errNoTmux := errors.New("tmux vanished")
+	tests := []struct {
+		name      string
+		inTmux    bool
+		responses []mockResponse
+		wantErr   string
+	}{
+		{
+			name:      "current session lookup fails",
+			inTmux:    true,
+			responses: []mockResponse{{err: errNoTmux}},
+			wantErr:   "detecting tmux session",
+		},
+		{
+			name:   "pane check fails inside the codeherd session",
+			inTmux: true,
+			responses: []mockResponse{
+				{stdout: "codeherd\n"}, // display-message (CurrentSession)
+				{err: errNoTmux},       // list-panes
+			},
+			wantErr: "checking pane status",
+		},
+		{
+			name: "pane check fails for an existing session",
+			responses: []mockResponse{
+				{},               // has-session (exists)
+				{err: errNoTmux}, // list-panes
+			},
+			wantErr: "checking pane status",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.inTmux {
+				t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
+			} else {
+				t.Setenv("TMUX", "")
+			}
+			err := runTUIInTmux(tmux.NewClient(&multiMockRunner{responses: tt.responses}))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) || !errors.Is(err, errNoTmux) {
+				t.Errorf("runTUIInTmux() = %v, want %q wrapping the tmux failure", err, tt.wantErr)
+			}
+		})
 	}
 }

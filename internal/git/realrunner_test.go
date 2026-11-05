@@ -27,17 +27,17 @@ func realRunnerRepos(t *testing.T) string {
 	root := t.TempDir()
 
 	remote := filepath.Join(root, "remote")
-	if err := os.MkdirAll(remote, 0o755); err != nil {
+	if err := os.MkdirAll(remote, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, remote, "init", "-b", "main")
-	if err := os.WriteFile(filepath.Join(remote, "README.md"), []byte("hi\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(remote, "README.md"), []byte("hi\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, remote, "add", ".")
 	runGit(t, remote, "commit", "-m", "init")
 	runGit(t, remote, "checkout", "-b", "feat-x")
-	if err := os.WriteFile(filepath.Join(remote, "feature.txt"), []byte("x\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(remote, "feature.txt"), []byte("x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, remote, "add", ".")
@@ -174,7 +174,7 @@ func TestRealWorktreeRunner_AddExistingBranch(t *testing.T) {
 func TestRealRunner_Clone(t *testing.T) {
 	src := t.TempDir()
 	runGit(t, src, "init", "-b", "main", ".")
-	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("hi"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("hi"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, src, "add", ".")

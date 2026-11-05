@@ -25,6 +25,8 @@ func TestHumanize_sentinels(t *testing.T) {
 		{"sessionNotFound", herd.ErrSessionNotFound, "No such session."},
 		{"sessionRunning", herd.ErrSessionRunning, "Session is running — stop it first."},
 		{"pathNotFound", herd.ErrPathNotFound, "Worktree path not found."},
+		{"sessionExists", herd.ErrSessionExists, "Session already exists."},
+		{"mainWorktree", herd.ErrMainWorktree, "Cannot delete the main worktree."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

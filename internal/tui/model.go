@@ -1,3 +1,4 @@
+// Package tui is the Bubble Tea dashboard that ch launches with no subcommand.
 package tui
 
 import (
@@ -174,100 +175,59 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		w := msg.Width
-		if w > maxWidth {
-			w = maxWidth
-		}
-		m.list.SetSize(w, msg.Height-4) // room for title + help
-		m.help.SetWidth(w)
-		return m, nil
+		return m.resize(msg), nil
 
 	case tickMsg:
 		return m, tea.Batch(m.refreshCmd(), tickCmd())
 
 	case spinner.TickMsg:
-		// Only advance (and thus re-schedule) while busy, so the tick
-		// loop stops cleanly once the operation completes.
-		if m.busy == "" {
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
+		return m.advanceSpinner(msg)
 
 	case itemsMsg:
-		items := make([]list.Item, len(msg))
-		for i, item := range msg {
-			items[i] = item
-		}
-		// Preserve selection. Only restore when unfiltered: when a filter is
-		// active, SetItems clears filteredItems and re-runs the filter
-		// asynchronously. Calling Select with a raw item index would set the
-		// paginator page without accounting for the (not-yet-known) filtered
-		// item count, which can cause a slice-bounds panic when the filter
-		// results arrive with fewer items than Page*PerPage.
-		var selProject, selBranch string
-		if m.list.FilterState() == list.Unfiltered {
-			if sel, ok := m.list.SelectedItem().(Item); ok {
-				selProject = sel.Project
-				selBranch = sel.Branch
-			}
-		}
-		cmd := m.list.SetItems(items)
-		if selProject != "" {
-			for i, li := range items {
-				if it, ok := li.(Item); ok && it.Project == selProject && it.Branch == selBranch {
-					m.list.Select(i)
-					break
-				}
-			}
-		}
-		return m, cmd
+		return m.setItems(msg)
+	}
 
+	if next, cmd, ok := m.onResult(msg); ok {
+		return next, cmd
+	}
+	return m.updateScreen(msg)
+}
+
+// onResult handles the messages that report how a background operation
+// ended. It reports false for any other message.
+func (m Model) onResult(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	switch msg := msg.(type) {
 	case errMsg:
 		m.busy = ""
 		if msg.err != nil {
 			m.statusMsg = humanize(msg.err)
 		}
-		return m, nil
+		return m, nil, true
 
 	case attachMsg:
 		if m.InsideTmux {
-			return m, m.switchClientCmd(msg.session)
+			return m, m.switchClientCmd(msg.session), true
 		}
 		m.PendingAttach = msg.session
-		return m, tea.Quit
+		return m, tea.Quit, true
 
 	case cloneDoneMsg:
 		m.busy = ""
 		m.statusMsg = fmt.Sprintf("Cloned %s", msg.project)
-		return m, m.refreshCmd()
+		return m, m.refreshCmd(), true
 
 	case worktreeCreatedMsg:
-		m.busy = ""
-		m.statusMsg = fmt.Sprintf("Created %s/%s", msg.ref.Project, msg.ref.Branch)
-		m.screen = screenList
-		m.form = nil
-		if msg.attach && msg.agent != "" {
-			return m, m.startSessionAfterCreate(msg)
-		}
-		return m, m.refreshCmd()
+		next, cmd := m.onWorktreeCreated(msg)
+		return next, cmd, true
 
 	case remoteBranchesMsg:
-		m.busy = ""
-		if m.remotePicker != nil && m.remotePicker.project == msg.project {
-			if msg.err != nil {
-				m.remotePicker.errText = humanize(msg.err)
-			} else {
-				m.remotePicker.setBranches(msg.branches)
-			}
-		}
-		return m, nil
+		return m.onRemoteBranches(msg), nil, true
 	}
+	return m, nil, false
+}
 
-	// Route to sub-screens.
+// updateScreen hands msg to whichever screen is showing.
+func (m Model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case screenConfirmDelete:
 		return m.updateConfirmDelete(msg)
@@ -282,59 +242,135 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		// Don't handle custom keys while filtering.
-		if m.list.FilterState() == list.Filtering {
-			break
+func (m Model) resize(msg tea.WindowSizeMsg) Model {
+	m.width = msg.Width
+	m.height = msg.Height
+	w := min(msg.Width, maxWidth)
+	m.list.SetSize(w, msg.Height-4) // room for title + help
+	m.help.SetWidth(w)
+	return m
+}
+
+// advanceSpinner only advances (and thus re-schedules) the spinner while
+// busy, so the tick loop stops cleanly once the operation completes.
+func (m Model) advanceSpinner(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
+	if m.busy == "" {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.spinner, cmd = m.spinner.Update(msg)
+	return m, cmd
+}
+
+// setItems replaces the list's items, keeping the selection on the same
+// project and branch.
+//
+// The selection is only restored when unfiltered: when a filter is active,
+// SetItems clears filteredItems and re-runs the filter asynchronously.
+// Calling Select with a raw item index would set the paginator page without
+// accounting for the (not-yet-known) filtered item count, which can cause a
+// slice-bounds panic when the filter results arrive with fewer items than
+// Page*PerPage.
+func (m Model) setItems(msg itemsMsg) (tea.Model, tea.Cmd) {
+	items := make([]list.Item, len(msg))
+	for i, item := range msg {
+		items[i] = item
+	}
+	sel, restore := m.list.SelectedItem().(Item)
+	restore = restore && m.list.FilterState() == list.Unfiltered && sel.Project != ""
+	cmd := m.list.SetItems(items)
+	if restore {
+		m.selectRow(items, sel.Project, sel.Branch)
+	}
+	return m, cmd
+}
+
+// selectRow selects the first row for project and branch, if there is one.
+func (m *Model) selectRow(items []list.Item, project, branch string) {
+	for i, li := range items {
+		if it, ok := li.(Item); ok && it.Project == project && it.Branch == branch {
+			m.list.Select(i)
+			return
 		}
+	}
+}
 
-		switch {
-		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
+func (m Model) onWorktreeCreated(msg worktreeCreatedMsg) (tea.Model, tea.Cmd) {
+	m.busy = ""
+	m.statusMsg = fmt.Sprintf("Created %s/%s", msg.ref.Project, msg.ref.Branch)
+	m.screen = screenList
+	m.form = nil
+	if msg.attach && msg.agent != "" {
+		return m, m.startSessionAfterCreate(msg)
+	}
+	return m, m.refreshCmd()
+}
 
-		case key.Matches(msg, m.keys.Attach):
-			return m.attachAction()
+// onRemoteBranches fills the remote picker, if it is still open for the
+// project the branches were fetched for.
+func (m Model) onRemoteBranches(msg remoteBranchesMsg) Model {
+	m.busy = ""
+	if m.remotePicker == nil || m.remotePicker.project != msg.project {
+		return m
+	}
+	if msg.err != nil {
+		m.remotePicker.errText = humanize(msg.err)
+	} else {
+		m.remotePicker.setBranches(msg.branches)
+	}
+	return m
+}
 
-		case key.Matches(msg, m.keys.Shell):
-			return m, m.shellAction()
-
-		case key.Matches(msg, m.keys.Clone):
-			cmd := m.cloneAction()
-			if cmd == nil {
-				return m, nil
+func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Custom keys are not handled while filtering.
+	if kp, ok := msg.(tea.KeyPressMsg); ok && m.list.FilterState() != list.Filtering {
+		for _, a := range m.listActions() {
+			if key.Matches(kp, a.binding) {
+				return a.run(m)
 			}
-			// cloneAction returned non-nil ⇒ selection is a valid
-			// uncloned project, so selectedItem() is non-nil.
-			sel := m.selectedItem()
-			m, cmd = m.enterBusy(fmt.Sprintf("Cloning %s…", sel.Project), cmd)
-			return m, cmd
-
-		case key.Matches(msg, m.keys.New):
-			return m.showForm()
-
-		case key.Matches(msg, m.keys.Delete):
-			return m.startDelete()
-
-		case key.Matches(msg, m.keys.Remote):
-			return m.startRemotePicker()
-
-		case key.Matches(msg, m.keys.NextProfile):
-			return m.switchProfile(+1)
-
-		case key.Matches(msg, m.keys.PrevProfile):
-			return m.switchProfile(-1)
-
-		case key.Matches(msg, m.keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-			return m, nil
 		}
 	}
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	return m, cmd
+}
+
+// listAction is what a key does on the list screen.
+type listAction struct {
+	binding key.Binding
+	run     func(Model) (tea.Model, tea.Cmd)
+}
+
+// listActions returns the list screen's key actions, matched in order.
+func (m Model) listActions() []listAction {
+	return []listAction{
+		{m.keys.Quit, func(m Model) (tea.Model, tea.Cmd) { return m, tea.Quit }},
+		{m.keys.Attach, Model.attachAction},
+		{m.keys.Shell, func(m Model) (tea.Model, tea.Cmd) { return m, m.shellAction() }},
+		{m.keys.Clone, Model.startClone},
+		{m.keys.New, Model.showForm},
+		{m.keys.Delete, Model.startDelete},
+		{m.keys.Remote, Model.startRemotePicker},
+		{m.keys.NextProfile, func(m Model) (tea.Model, tea.Cmd) { return m.switchProfile(+1) }},
+		{m.keys.PrevProfile, func(m Model) (tea.Model, tea.Cmd) { return m.switchProfile(-1) }},
+		{m.keys.Help, func(m Model) (tea.Model, tea.Cmd) {
+			m.help.ShowAll = !m.help.ShowAll
+			return m, nil
+		}},
+	}
+}
+
+// startClone clones the selected project behind the busy screen.
+func (m Model) startClone() (tea.Model, tea.Cmd) {
+	cmd := m.cloneAction()
+	if cmd == nil {
+		return m, nil
+	}
+	// cloneAction returned non-nil ⇒ selection is a valid uncloned project,
+	// so selectedItem() is non-nil.
+	sel := m.selectedItem()
+	return m.enterBusy(fmt.Sprintf("Cloning %s…", sel.Project), cmd)
 }
 
 func (m Model) View() tea.View {
@@ -389,10 +425,7 @@ func (m Model) viewList() string {
 	tb := titleStyle.Render(title)
 	if agentCount > 0 {
 		counter := dimStyle.Render(fmt.Sprintf("%d agents", agentCount))
-		pad := maxWidth - lipgloss.Width(tb) - lipgloss.Width(counter)
-		if pad < 1 {
-			pad = 1
-		}
+		pad := max(maxWidth-lipgloss.Width(tb)-lipgloss.Width(counter), 1)
 		tb = tb + fmt.Sprintf("%*s", pad, counter)
 	}
 
@@ -545,27 +578,33 @@ func (m Model) fetchRemoteBranchesCmd(project string) tea.Cmd {
 }
 
 // updateRemotePicker handles input while the remote-branch picker is shown.
+// While its list is filtering, every key belongs to the filter.
 func (m Model) updateRemotePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-		if m.remotePicker.list.FilterState() != list.Filtering {
-			switch keyMsg.String() {
-			case "esc":
-				m.screen = screenList
-				m.remotePicker = nil
-				return m, nil
-			case "enter":
-				if rb, ok := m.remotePicker.selected(); ok {
-					project := m.remotePicker.project
-					m.remotePicker = nil
-					return m.showTrackForm(project, rb)
-				}
-				return m, nil
-			}
+	if kp, ok := msg.(tea.KeyPressMsg); ok && m.remotePicker.list.FilterState() != list.Filtering {
+		switch kp.String() {
+		case "esc":
+			m.screen = screenList
+			m.remotePicker = nil
+			return m, nil
+		case "enter":
+			return m.trackSelectedRemote()
 		}
 	}
 	var cmd tea.Cmd
 	m.remotePicker, cmd = m.remotePicker.Update(msg)
 	return m, cmd
+}
+
+// trackSelectedRemote closes the picker and opens the track form for the
+// chosen branch. With nothing to choose, it stays put.
+func (m Model) trackSelectedRemote() (tea.Model, tea.Cmd) {
+	rb, ok := m.remotePicker.selected()
+	if !ok {
+		return m, nil
+	}
+	project := m.remotePicker.project
+	m.remotePicker = nil
+	return m.showTrackForm(project, rb)
 }
 
 // showTrackForm opens the create-worktree form pre-filled to track the selected

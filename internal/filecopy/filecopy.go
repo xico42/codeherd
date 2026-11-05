@@ -98,7 +98,7 @@ func copyFile(src string, root *os.Root, dst string) (err error) {
 	}
 	defer func() { err = errors.Join(err, in.Close()) }()
 
-	if err := root.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := root.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 		return fmt.Errorf("creating directories: %w", err)
 	}
 

@@ -88,52 +88,59 @@ func (c *CloneProjectCmd) Cobra() *cobra.Command {
 }
 
 func (c *CloneProjectCmd) Run(cmd *cobra.Command, args []string) error {
-	out := newPrinter(cmd.OutOrStdout())
 	if c.All {
-		errOut := newPrinter(cmd.ErrOrStderr())
-		hadFailure := false
-		for _, p := range h.Projects() {
-			name := p.Name
-			err := h.Clone(name)
-			switch {
-			case err == nil:
-				out.Printf("Cloning %s... done\n", name)
-			default:
-				var ace *herd.AlreadyClonedError
-				if errors.As(err, &ace) {
-					out.Printf("Warning: %s\n", ace)
-				} else {
-					errOut.Printf("Error: failed to clone %s: %v\n", name, err)
-					hadFailure = true
-				}
-			}
-		}
-		if hadFailure {
-			return fmt.Errorf("one or more clones failed")
-		}
-		return errors.Join(out.Err(), errOut.Err())
+		return cloneAll(cmd)
 	}
-
 	if len(args) == 0 {
 		return fmt.Errorf("requires a project name, or use --all")
 	}
-	name := args[0]
+	return cloneOne(cmd, args[0])
+}
+
+// cloneAll clones every configured project, reporting each failure on stderr
+// and carrying on; it fails at the end if any clone failed.
+func cloneAll(cmd *cobra.Command) error {
+	out := newPrinter(cmd.OutOrStdout())
+	errOut := newPrinter(cmd.ErrOrStderr())
+	hadFailure := false
+	for _, p := range h.Projects() {
+		err := h.Clone(p.Name)
+		var ace *herd.AlreadyClonedError
+		switch {
+		case err == nil:
+			out.Printf("Cloning %s... done\n", p.Name)
+		case errors.As(err, &ace):
+			out.Printf("Warning: %s\n", ace)
+		default:
+			errOut.Printf("Error: failed to clone %s: %v\n", p.Name, err)
+			hadFailure = true
+		}
+	}
+	if hadFailure {
+		return fmt.Errorf("one or more clones failed")
+	}
+	return errors.Join(out.Err(), errOut.Err())
+}
+
+// cloneOne clones a single project. An already-cloned project is a warning,
+// not a failure.
+func cloneOne(cmd *cobra.Command, name string) error {
+	out := newPrinter(cmd.OutOrStdout())
 	out.Printf("Cloning %s... ", name)
 	err := h.Clone(name)
+	var ace *herd.AlreadyClonedError
 	switch {
 	case err == nil:
 		out.Println("done")
 		if e, showErr := h.Project(name); showErr == nil {
 			out.Printf("  Path: %s\n", e.Path)
 		}
+	case errors.As(err, &ace):
+		out.Println()
+		out.Printf("Warning: %s\n", ace)
 	default:
 		out.Println()
-		var ace *herd.AlreadyClonedError
-		if errors.As(err, &ace) {
-			out.Printf("Warning: %s\n", ace)
-		} else {
-			return fmt.Errorf("failed to clone %s: %w", name, err)
-		}
+		return fmt.Errorf("failed to clone %s: %w", name, err)
 	}
 	return out.Err()
 }

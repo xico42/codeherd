@@ -19,28 +19,30 @@ func humanize(err error) string {
 	if err == nil {
 		return ""
 	}
-	switch {
-	case errors.Is(err, herd.ErrNotCloned):
-		return "Project is not cloned — clone it first."
-	case errors.Is(err, herd.ErrWorktreeExists):
-		return "Worktree already exists."
-	case errors.Is(err, herd.ErrWorktreeNotFound):
-		return "Worktree not found."
-	case errors.Is(err, herd.ErrSessionExists):
-		var se *herd.SessionExistsError
-		if errors.As(err, &se) {
-			return fmt.Sprintf("Session %s/%s (%s) already exists.", se.Ref.Project, se.Ref.Branch, se.Type)
-		}
-		return "Session already exists."
-	case errors.Is(err, herd.ErrSessionNotFound):
-		return "No such session."
-	case errors.Is(err, herd.ErrSessionRunning):
-		return "Session is running — stop it first."
-	case errors.Is(err, herd.ErrPathNotFound):
-		return "Worktree path not found."
-	case errors.Is(err, herd.ErrMainWorktree):
-		return "Cannot delete the main worktree."
-	default:
-		return err.Error()
+	var se *herd.SessionExistsError
+	if errors.As(err, &se) {
+		return fmt.Sprintf("Session %s/%s (%s) already exists.", se.Ref.Project, se.Ref.Branch, se.Type)
 	}
+	for _, s := range sentinelMessages {
+		if errors.Is(err, s.err) {
+			return s.msg
+		}
+	}
+	return err.Error()
+}
+
+// sentinelMessages are the status lines for the herd sentinels, checked in
+// order.
+var sentinelMessages = []struct {
+	err error
+	msg string
+}{
+	{herd.ErrNotCloned, "Project is not cloned — clone it first."},
+	{herd.ErrWorktreeExists, "Worktree already exists."},
+	{herd.ErrWorktreeNotFound, "Worktree not found."},
+	{herd.ErrSessionExists, "Session already exists."},
+	{herd.ErrSessionNotFound, "No such session."},
+	{herd.ErrSessionRunning, "Session is running — stop it first."},
+	{herd.ErrPathNotFound, "Worktree path not found."},
+	{herd.ErrMainWorktree, "Cannot delete the main worktree."},
 }

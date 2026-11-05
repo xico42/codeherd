@@ -70,7 +70,7 @@ func (h *Herd) Clone(project string) error {
 	if err := hook.Trigger(semconv.HookPreClone, attrs, h.cfg.Defaults.ProjectsDir); err != nil {
 		return fmt.Errorf("pre-clone hook: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("creating parent directories: %w", err)
 	}
 	if err := h.git.Clone(p.Repo, path, p.DefaultBranch); err != nil {

@@ -247,7 +247,7 @@ func TestCreateSession_autoCreate_worktreeNotFound(t *testing.T) {
 	// cloneDir exists (project is "cloned") but worktreePath does not.
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	// worktreePath intentionally not created
@@ -280,10 +280,10 @@ func TestCreateSession_agent_noDefaultAgent(t *testing.T) {
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
 	worktreePath := filepath.Join(cloneDir+"__worktrees", "feat")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+	if err := os.MkdirAll(worktreePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -319,10 +319,10 @@ func TestCreateSession_shell_existingWorktree(t *testing.T) {
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
 	worktreePath := cloneDir + "__worktrees" + string(os.PathSeparator) + "feat"
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+	if err := os.MkdirAll(worktreePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -458,5 +458,23 @@ func TestExecTmuxAttach_insideTmux_switchesClient(t *testing.T) {
 
 	if err := execTmuxAttach("__probe__"); err == nil || !strings.Contains(err.Error(), "switching client") {
 		t.Errorf("execTmuxAttach() = %v, want switch-client to be tried and fail", err)
+	}
+}
+
+// TestDeleteSession_noSession_returnsError verifies that without --force a
+// missing session is reported instead of prompting.
+func TestDeleteSession_noSession_returnsError(t *testing.T) {
+	setHerdTmux(t, &config.Config{}, &multiMockRunner{}) // list-sessions returns nothing
+
+	c := &DeleteSessionCmd{}
+	cobraCmd := c.Cobra()
+	var out bytes.Buffer
+	cobraCmd.SetOut(&out)
+
+	if err := c.Run(cobraCmd, []string{"myapp", "feat"}); err == nil {
+		t.Fatal("Run() = nil, want a session-not-found error")
+	}
+	if out.Len() != 0 {
+		t.Errorf("output = %q, want no prompt", out.String())
 	}
 }

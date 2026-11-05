@@ -6,6 +6,7 @@ package git
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -56,6 +57,34 @@ type Runner interface {
 	CloneRunner
 }
 
+// Run executes git with args in dir (the current directory when dir is "")
+// and returns its stdout and stderr. It is the package's only exec site.
+//
+// Every caller puts --end-of-options before the arguments that come from
+// outside — branch names, start points, paths, remotes — so a value such as
+// "--upload-pack=…" reaches git as an argument and is never parsed as an
+// option.
+func Run(dir string, args ...string) (stdout, stderr []byte, err error) {
+	cmd := exec.Command("git", args...) //nolint:gosec // G204: fixed binary, and callers end option parsing before outside input
+	cmd.Dir = dir
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return outBuf.Bytes(), errBuf.Bytes(), fmt.Errorf("running git: %w", err)
+	}
+	return outBuf.Bytes(), errBuf.Bytes(), nil
+}
+
+// run is Run for commands whose output only matters on failure, where git's
+// stderr is folded into the error.
+func run(dir, what string, args ...string) error {
+	if _, stderr, err := Run(dir, args...); err != nil {
+		return fmt.Errorf("%s: %w\n%s", what, err, stderr)
+	}
+	return nil
+}
+
 // RealRunner runs git commands via os/exec.
 type RealRunner struct{}
 
@@ -63,49 +92,27 @@ type RealRunner struct{}
 func NewRealRunner() *RealRunner { return &RealRunner{} }
 
 func (r *RealRunner) Add(cloneDir, worktreePath, branch string) error {
-	cmd := exec.Command("git", "worktree", "add", worktreePath, branch)
-	cmd.Dir = cloneDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git worktree add: %w\n%s", err, out)
-	}
-	return nil
+	return run(cloneDir, "git worktree add",
+		"worktree", "add", "--end-of-options", worktreePath, branch)
 }
 
 func (r *RealRunner) AddNewBranch(cloneDir, worktreePath, branch string) error {
-	cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath)
-	cmd.Dir = cloneDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git worktree add -b: %w\n%s", err, out)
-	}
-	return nil
+	return run(cloneDir, "git worktree add -b",
+		"worktree", "add", "-b", branch, "--end-of-options", worktreePath)
 }
 
 func (r *RealRunner) AddNewBranchFrom(cloneDir, worktreePath, branch, startPoint string) error {
-	cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, startPoint)
-	cmd.Dir = cloneDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git worktree add -b (from): %w\n%s", err, out)
-	}
-	return nil
+	return run(cloneDir, "git worktree add -b (from)",
+		"worktree", "add", "-b", branch, "--end-of-options", worktreePath, startPoint)
 }
 
 func (r *RealRunner) Remove(cloneDir, worktreePath string) error {
-	cmd := exec.Command("git", "worktree", "remove", worktreePath)
-	cmd.Dir = cloneDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git worktree remove: %w\n%s", err, out)
-	}
-	return nil
+	return run(cloneDir, "git worktree remove",
+		"worktree", "remove", "--end-of-options", worktreePath)
 }
 
 func (r *RealRunner) List(cloneDir string) ([]WorktreeInfo, error) {
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
-	cmd.Dir = cloneDir
-	out, err := cmd.Output()
+	out, _, err := Run(cloneDir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, fmt.Errorf("git worktree list: %w", err)
 	}
@@ -113,23 +120,12 @@ func (r *RealRunner) List(cloneDir string) ([]WorktreeInfo, error) {
 }
 
 func (r *RealRunner) Fetch(cloneDir, remote, branch string) error {
-	cmd := exec.Command("git", "fetch", remote, branch)
-	cmd.Dir = cloneDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git fetch %s %s: %w\n%s", remote, branch, err, out)
-	}
-	return nil
+	return run(cloneDir, fmt.Sprintf("git fetch %s %s", remote, branch),
+		"fetch", "--end-of-options", remote, branch)
 }
 
 func (r *RealRunner) FetchAll(cloneDir string) error {
-	cmd := exec.Command("git", "fetch", "--all", "--prune")
-	cmd.Dir = cloneDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git fetch --all: %w\n%s", err, out)
-	}
-	return nil
+	return run(cloneDir, "git fetch --all", "fetch", "--all", "--prune")
 }
 
 // FastForward advances the local branch to <remote>/<branch> without losing
@@ -139,25 +135,15 @@ func (r *RealRunner) FetchAll(cloneDir string) error {
 // reported but treated as best-effort by callers.
 func (r *RealRunner) FastForward(cloneDir, remote, branch string) error {
 	refspec := branch + ":" + branch
-	cmd := exec.Command("git", "fetch", remote, refspec)
-	cmd.Dir = cloneDir
-	if _, err := cmd.CombinedOutput(); err == nil {
+	if _, _, err := Run(cloneDir, "fetch", "--end-of-options", remote, refspec); err == nil {
 		return nil
 	}
-	remoteRef := remote + "/" + branch
-	cmd = exec.Command("git", "merge", "--ff-only", remoteRef)
-	cmd.Dir = cloneDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("fast-forward %s: %w\n%s", branch, err, out)
-	}
-	return nil
+	return run(cloneDir, "fast-forward "+branch,
+		"merge", "--ff-only", "--end-of-options", remote+"/"+branch)
 }
 
 func (r *RealRunner) Remotes(cloneDir string) ([]string, error) {
-	cmd := exec.Command("git", "remote")
-	cmd.Dir = cloneDir
-	out, err := cmd.Output()
+	out, _, err := Run(cloneDir, "remote")
 	if err != nil {
 		return nil, fmt.Errorf("git remote: %w", err)
 	}
@@ -171,9 +157,7 @@ func (r *RealRunner) Remotes(cloneDir string) ([]string, error) {
 }
 
 func (r *RealRunner) ListRemoteBranches(cloneDir string) ([]RemoteBranch, error) {
-	cmd := exec.Command("git", "for-each-ref", "--format=%(refname:short)", "refs/remotes")
-	cmd.Dir = cloneDir
-	out, err := cmd.Output()
+	out, _, err := Run(cloneDir, "for-each-ref", "--format=%(refname:short)", "refs/remotes")
 	if err != nil {
 		return nil, fmt.Errorf("git for-each-ref: %w", err)
 	}
@@ -181,20 +165,13 @@ func (r *RealRunner) ListRemoteBranches(cloneDir string) ([]RemoteBranch, error)
 }
 
 func (r *RealRunner) AddTracking(cloneDir, worktreePath, branch, remoteRef string) error {
-	cmd := exec.Command("git", "worktree", "add", "--track", "-b", branch, worktreePath, remoteRef)
-	cmd.Dir = cloneDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git worktree add --track: %w\n%s", err, out)
-	}
-	return nil
+	return run(cloneDir, "git worktree add --track",
+		"worktree", "add", "--track", "-b", branch, "--end-of-options", worktreePath, remoteRef)
 }
 
 func (r *RealRunner) HasLocalBranch(cloneDir, branch string) (bool, error) {
 	ref := "refs/heads/" + branch
-	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", ref)
-	cmd.Dir = cloneDir
-	err := cmd.Run()
+	_, _, err := Run(cloneDir, "show-ref", "--verify", "--quiet", "--end-of-options", ref)
 	if err == nil {
 		return true, nil
 	}
@@ -211,13 +188,8 @@ func (r *RealRunner) Clone(repo, path, branch string) error {
 	if branch != "" {
 		args = append(args, "--branch", branch)
 	}
-	args = append(args, repo, path)
-	cmd := exec.Command("git", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git clone: %w\n%s", err, out)
-	}
-	return nil
+	args = append(args, "--end-of-options", repo, path)
+	return run("", "git clone", args...)
 }
 
 // parseWorktreePorcelain parses the output of `git worktree list --porcelain`.

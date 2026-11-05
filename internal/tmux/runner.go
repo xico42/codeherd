@@ -39,10 +39,9 @@ func (r *RealRunner) Run(args ...string) (stdout, stderr string, exitCode int, e
 	if socket := os.Getenv(SocketEnvVar); socket != "" {
 		args = append([]string{"-S", socket}, args...)
 	}
-	// tmux binary is fixed; args come from typed Client methods, with an
-	// optional `-S <socket>` injected from a process-local env var that is
-	// only set by tests.
-	cmd := exec.Command("tmux", args...) // #nosec G702
+	// The binary is fixed and args come from typed Client methods, plus the
+	// optional `-S <socket>` that only tests set.
+	cmd := exec.Command("tmux", args...) //nolint:gosec // G204: fixed binary, args built by typed Client methods
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf

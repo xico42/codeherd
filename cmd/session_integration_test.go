@@ -4,9 +4,10 @@ package cmd_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/xico42/codeherd/internal/testutil"
 )
 
 // writeSessionConfigWithProjectsDir writes a config pointing at a real
@@ -25,39 +26,21 @@ cmd = "true"
 [projects.myapp]
 repo = "git@github.com:user/myapp.git"
 `
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return cfgPath
-}
-
-// initBareRepo creates a minimal git repo at cloneDir suitable for
-// `git worktree add` calls.
-func initBareRepo(t *testing.T, cloneDir string) {
-	t.Helper()
-	os.MkdirAll(cloneDir, 0o755)
-	cmds := [][]string{
-		{"git", "init", "-b", "main", cloneDir},
-		{"git", "-C", cloneDir, "config", "user.email", "test@test.com"},
-		{"git", "-C", cloneDir, "config", "user.name", "Test"},
-		{"git", "-C", cloneDir, "commit", "--allow-empty", "-m", "init"},
-	}
-	for _, c := range cmds {
-		if out, err := exec.Command(c[0], c[1:]...).CombinedOutput(); err != nil {
-			t.Fatalf("setup %v: %v\n%s", c, err, out)
-		}
-	}
 }
 
 // TestCreateSession_autoCreate_createsWorktreeAndStartsSession verifies that
 // create session creates the worktree when it is missing and the project is
 // cloned. Requires tmux to be available.
 func TestCreateSession_autoCreate_createsWorktreeAndStartsSession(t *testing.T) {
-	useIsolatedTmux(t)
+	testutil.IsolateTmux(t)
 
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	initBareRepo(t, cloneDir)
+	testutil.InitRepo(t, cloneDir)
 
 	cfgPath := writeSessionConfigWithProjectsDir(t, projectsDir)
 

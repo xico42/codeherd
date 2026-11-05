@@ -46,7 +46,8 @@ func (s *Service) Trigger(name string, attrs map[string]string, workDir string) 
 		return nil
 	}
 
-	cmd := exec.Command("sh", "-c", command)
+	// Running the user's configured hook through the shell is the feature.
+	cmd := exec.Command("sh", "-c", command) //nolint:gosec // G204: the hook is a shell command the user configured
 
 	// Inherit current environment and add hook attributes.
 	cmd.Env = os.Environ()

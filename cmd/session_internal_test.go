@@ -2,16 +2,18 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/herd"
 	"github.com/xico42/codeherd/internal/semconv"
+	"github.com/xico42/codeherd/internal/testutil"
 	"github.com/xico42/codeherd/internal/tmux"
 )
 
@@ -311,21 +313,9 @@ func TestCreateSession_agent_noDefaultAgent(t *testing.T) {
 // past the worktree check and reaches the session start phase against a real
 // (isolated) tmux server.
 func TestCreateSession_shell_existingWorktree(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
-	// Isolate tmux to a per-test socket so the test's transient session does
-	// not appear on the developer's outer tmux server.
-	socket := filepath.Join(t.TempDir(), "tmux.sock")
-	t.Setenv(tmux.SocketEnvVar, socket)
-	t.Setenv("TMUX", "")
-	probe := exec.Command("tmux", "-S", socket, "new-session", "-d", "-s", "__probe__", "sleep", "30")
-	if out, err := probe.CombinedOutput(); err != nil {
-		t.Skipf("tmux daemonize unavailable: %v\n%s", err, strings.TrimSpace(string(out)))
-	}
-	t.Cleanup(func() {
-		_ = exec.Command("tmux", "-S", socket, "kill-server").Run()
-	})
+	// Isolate tmux so the test's transient session does not appear on the
+	// developer's outer tmux server.
+	testutil.IsolateTmux(t)
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
 	worktreePath := cloneDir + "__worktrees" + string(os.PathSeparator) + "feat"
@@ -414,5 +404,59 @@ func TestDeleteSession_force_stopError(t *testing.T) {
 	}
 	if got := out.String(); got != "Stopping myapp/feat...  \n" {
 		t.Errorf("output = %q, want the progress line terminated by a newline", got)
+	}
+}
+
+// stubAttachExec replaces the tmux lookup and the process exec for the test.
+// It records the argv execTmuxAttach would exec.
+func stubAttachExec(t *testing.T, lookErr, execErr error) *[]string {
+	t.Helper()
+	origLook, origExec := lookPath, syscallExec
+	t.Cleanup(func() { lookPath, syscallExec = origLook, origExec })
+	lookPath = func(string) (string, error) { return "/usr/bin/tmux", lookErr }
+	var argv []string
+	syscallExec = func(_ string, a []string, _ []string) error {
+		argv = a
+		return execErr
+	}
+	return &argv
+}
+
+func TestExecTmuxAttach_outsideTmux_execsAttach(t *testing.T) {
+	t.Setenv("TMUX", "")
+	argv := stubAttachExec(t, nil, nil)
+
+	if err := execTmuxAttach("$7"); err != nil {
+		t.Fatalf("execTmuxAttach() = %v, want nil", err)
+	}
+	if want := []string{"tmux", "attach-session", "-t", "$7"}; !slices.Equal(*argv, want) {
+		t.Errorf("exec argv = %q, want %q", *argv, want)
+	}
+}
+
+func TestExecTmuxAttach_tmuxMissing(t *testing.T) {
+	t.Setenv("TMUX", "")
+	stubAttachExec(t, errors.New("not found"), nil)
+
+	if err := execTmuxAttach("$7"); err == nil || !strings.Contains(err.Error(), "tmux not found") {
+		t.Errorf("execTmuxAttach() = %v, want a tmux-not-found error", err)
+	}
+}
+
+func TestExecTmuxAttach_execFails(t *testing.T) {
+	t.Setenv("TMUX", "")
+	stubAttachExec(t, nil, errors.New("exec format error"))
+
+	if err := execTmuxAttach("$7"); err == nil || !strings.Contains(err.Error(), "exec tmux") {
+		t.Errorf("execTmuxAttach() = %v, want an exec error", err)
+	}
+}
+
+func TestExecTmuxAttach_insideTmux_switchesClient(t *testing.T) {
+	testutil.IsolateTmux(t)
+	t.Setenv("TMUX", "/tmp/fake,1,0") // inside tmux, but this server has no attached client
+
+	if err := execTmuxAttach("__probe__"); err == nil || !strings.Contains(err.Error(), "switching client") {
+		t.Errorf("execTmuxAttach() = %v, want switch-client to be tried and fail", err)
 	}
 }

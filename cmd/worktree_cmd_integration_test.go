@@ -4,7 +4,6 @@ package cmd
 
 import (
 	"bytes"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,57 +11,19 @@ import (
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/git"
 	"github.com/xico42/codeherd/internal/herd"
+	"github.com/xico42/codeherd/internal/testutil"
 	"github.com/xico42/codeherd/internal/tmux"
 )
-
-// isolateTmux points every tmux call at a per-test server and skips the test
-// when tmux cannot daemonize (sandboxed CI).
-func isolateTmux(t *testing.T) {
-	t.Helper()
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
-	socket := filepath.Join(t.TempDir(), "tmux.sock")
-	t.Setenv(tmux.SocketEnvVar, socket)
-	t.Setenv("TMUX", "")
-	probe := exec.Command("tmux", "-S", socket, "new-session", "-d", "-s", "__probe__", "sleep", "30")
-	if out, err := probe.CombinedOutput(); err != nil {
-		t.Skipf("tmux daemonize unavailable: %v\n%s", err, strings.TrimSpace(string(out)))
-	}
-	t.Cleanup(func() {
-		_ = exec.Command("tmux", "-S", socket, "kill-server").Run()
-	})
-}
-
-// gitIn runs git in dir and fails the test on error.
-func gitIn(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	full := append([]string{"-C", dir}, args...)
-	if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-}
-
-// initRepo creates a repo on branch main with one commit.
-func initRepo(t *testing.T, dir string) {
-	t.Helper()
-	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
-	gitIn(t, dir, "config", "user.email", "test@test.com")
-	gitIn(t, dir, "config", "user.name", "Test")
-	gitIn(t, dir, "commit", "--allow-empty", "-m", "init")
-}
 
 // setupWorktreeHerd builds a cloned myapp project under a temp projects_dir and
 // points the package Herd at real git and an isolated tmux server. It returns
 // the clone dir.
 func setupWorktreeHerd(t *testing.T, agents map[string]config.AgentConfig, defaultAgent string) string {
 	t.Helper()
-	isolateTmux(t)
+	testutil.IsolateTmux(t)
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	initRepo(t, cloneDir)
+	testutil.InitRepo(t, cloneDir)
 
 	c := &config.Config{
 		Defaults: config.DefaultsConfig{ProjectsDir: projectsDir, Agent: defaultAgent},
@@ -108,9 +69,9 @@ func TestCreateWorktree_printsProgressAndPath(t *testing.T) {
 func TestCreateWorktree_track_printsCheckoutProgress(t *testing.T) {
 	cloneDir := setupWorktreeHerd(t, nil, "")
 	remote := filepath.Join(t.TempDir(), "remote")
-	initRepo(t, remote)
-	gitIn(t, remote, "branch", "feat-x")
-	gitIn(t, cloneDir, "remote", "add", "origin", remote)
+	testutil.InitRepo(t, remote)
+	testutil.Git(t, remote, "branch", "feat-x")
+	testutil.Git(t, cloneDir, "remote", "add", "origin", remote)
 
 	out, err := runCreateWorktree(t, []string{"myapp"}, func(c *CreateWorktreeCmd) { c.Track = "feat-x" })
 	if err != nil {
@@ -171,7 +132,7 @@ func runDeleteWorktree(t *testing.T, branch string) (string, error) {
 
 func TestDeleteWorktree_force_printsProgress(t *testing.T) {
 	cloneDir := setupWorktreeHerd(t, nil, "")
-	gitIn(t, cloneDir, "worktree", "add", "-b", "feat", filepath.Join(cloneDir+"__worktrees", "feat"), "main")
+	testutil.Git(t, cloneDir, "worktree", "add", "-b", "feat", filepath.Join(cloneDir+"__worktrees", "feat"), "main")
 
 	out, err := runDeleteWorktree(t, "feat")
 	if err != nil {

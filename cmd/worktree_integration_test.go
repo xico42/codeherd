@@ -4,10 +4,11 @@ package cmd_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xico42/codeherd/internal/testutil"
 )
 
 // writeListWorktreeConfig writes a config with default_branch set so the main
@@ -30,14 +31,6 @@ default_branch = "main"
 	return cfgPath
 }
 
-func gitRun(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	full := append([]string{"-C", dir}, args...)
-	if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-}
-
 // TestListWorktree_noSession_showsLiveBranch is the end-to-end guard for the
 // geomonitor bug over the primary path: worktrees with NO session. It drives
 // the real `ch list worktree` over a real git repo, covering the whole flow the
@@ -50,21 +43,21 @@ func gitRun(t *testing.T, dir string, args ...string) {
 func TestListWorktree_noSession_showsLiveBranch(t *testing.T) {
 	// list worktree reaches tmux via h.Sessions(); isolate so it neither reads
 	// nor leaks into the developer's server.
-	useIsolatedTmux(t)
+	testutil.IsolateTmux(t)
 
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	initBareRepo(t, cloneDir) // main branch + one commit
+	testutil.InitRepo(t, cloneDir) // main branch + one commit
 
 	// The main clone dir has a non-default branch checked out.
-	gitRun(t, cloneDir, "checkout", "-b", "docs/rbac-epic")
+	testutil.Git(t, cloneDir, "checkout", "-b", "docs/rbac-epic")
 
 	// A worktree whose directory name does not match its branch (geomonitor's
 	// chore-cron-rework), and a normal one.
 	mismatch := filepath.Join(cloneDir+"__worktrees", "chore-cron-rework")
-	gitRun(t, cloneDir, "worktree", "add", "-b", "chore/restore-cron-rework", mismatch, "main")
+	testutil.Git(t, cloneDir, "worktree", "add", "-b", "chore/restore-cron-rework", mismatch, "main")
 	normal := filepath.Join(cloneDir+"__worktrees", "feat")
-	gitRun(t, cloneDir, "worktree", "add", "-b", "feat", normal, "main")
+	testutil.Git(t, cloneDir, "worktree", "add", "-b", "feat", normal, "main")
 
 	cfgPath := writeListWorktreeConfig(t, projectsDir)
 
@@ -100,11 +93,11 @@ func TestListWorktree_noSession_showsLiveBranch(t *testing.T) {
 // since moved off it, the row shows the recorded branch with the live checkout
 // as a hint. A shell session persists in tmux and stamps @codeherd_branch.
 func TestListWorktree_sessionDivergence_showsRecordedBranch(t *testing.T) {
-	useIsolatedTmux(t)
+	testutil.IsolateTmux(t)
 
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	initBareRepo(t, cloneDir)
+	testutil.InitRepo(t, cloneDir)
 
 	cfgPath := writeListWorktreeConfig(t, projectsDir)
 
@@ -115,7 +108,7 @@ func TestListWorktree_sessionDivergence_showsRecordedBranch(t *testing.T) {
 
 	// Move HEAD off "feat" inside that worktree.
 	wtPath := filepath.Join(cloneDir+"__worktrees", "feat")
-	gitRun(t, wtPath, "checkout", "-b", "other")
+	testutil.Git(t, wtPath, "checkout", "-b", "other")
 
 	out := captureStdout(t, func() {
 		if err := runCmd(t, "--config", cfgPath, "list", "worktree"); err != nil {

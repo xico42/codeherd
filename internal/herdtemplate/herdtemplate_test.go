@@ -722,11 +722,6 @@ func TestProcess_unreadableSubdirectory(t *testing.T) {
 	if err := os.Mkdir(locked, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := os.Chmod(locked, 0o700); err != nil {
-			t.Error(err)
-		}
-	})
 	if err := processDir(t, dir); err == nil {
 		t.Error("Process() = nil, want the walk error reported")
 	}

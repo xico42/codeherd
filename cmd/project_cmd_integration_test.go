@@ -12,6 +12,7 @@ import (
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/git"
 	"github.com/xico42/codeherd/internal/herd"
+	"github.com/xico42/codeherd/internal/testutil"
 )
 
 // localCloneGit clones from a local source repo whatever URL it is asked for,
@@ -60,7 +61,7 @@ func runCloneProject(t *testing.T, args []string, all bool) (stdout, stderr stri
 
 func TestCloneProject_single_printsProgressAndPath(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "source")
-	initRepo(t, source)
+	testutil.InitRepo(t, source)
 	projectsDir := setupCloneHerd(t, source)
 
 	out, _, err := runCloneProject(t, []string{"myapp"}, false)
@@ -76,7 +77,7 @@ func TestCloneProject_single_printsProgressAndPath(t *testing.T) {
 
 func TestCloneProject_all_printsProgress(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "source")
-	initRepo(t, source)
+	testutil.InitRepo(t, source)
 	setupCloneHerd(t, source)
 
 	out, _, err := runCloneProject(t, nil, true)

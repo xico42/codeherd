@@ -8,6 +8,7 @@ import (
 
 	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/semconv"
+	"github.com/xico42/codeherd/internal/testutil"
 )
 
 func TestParseEntry_SamePath(t *testing.T) {
@@ -45,10 +46,7 @@ func TestCopy_SamePathEntry(t *testing.T) {
 		t.Fatalf("Copy() error = %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(targetDir, "CLAUDE.md"))
-	if err != nil {
-		t.Fatalf("reading copied file: %v", err)
-	}
+	data := testutil.ReadFile(t, targetDir, "CLAUDE.md")
 	if string(data) != "hello" {
 		t.Errorf("content = %q, want %q", string(data), "hello")
 	}
@@ -70,10 +68,7 @@ func TestCopy_ColonEntry(t *testing.T) {
 		t.Fatalf("Copy() error = %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(targetDir, "RULES.md"))
-	if err != nil {
-		t.Fatalf("reading copied file: %v", err)
-	}
+	data := testutil.ReadFile(t, targetDir, "RULES.md")
 	if string(data) != "rules" {
 		t.Errorf("content = %q, want %q", string(data), "rules")
 	}
@@ -219,4 +214,55 @@ func (m *mockHook) Trigger(name string, attrs map[string]string, workDir string)
 		return fmt.Errorf("hook %s failed", name)
 	}
 	return nil
+}
+
+// TestCopy_destinationCannotEscapeTarget guards the worktree boundary: a files
+// entry must not be able to write outside the worktree it provisions.
+func TestCopy_destinationCannotEscapeTarget(t *testing.T) {
+	baseDir := t.TempDir()
+	parent := t.TempDir()
+	targetDir := filepath.Join(parent, "worktree")
+	if err := os.Mkdir(targetDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "CLAUDE.md"), []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	if err := svc.Copy([]string{"CLAUDE.md:../escaped.md"}, baseDir, targetDir, nil); err == nil {
+		t.Error("Copy() = nil, want the escaping destination rejected")
+	}
+	if _, err := os.Stat(filepath.Join(parent, "escaped.md")); !os.IsNotExist(err) {
+		t.Errorf("file was written outside the target dir (stat err = %v)", err)
+	}
+}
+
+func TestCopy_missingTargetDir(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "CLAUDE.md"), []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	err := svc.Copy([]string{"CLAUDE.md"}, baseDir, filepath.Join(t.TempDir(), "absent"), nil)
+	if err == nil {
+		t.Error("Copy() = nil, want an error for a missing target dir")
+	}
+}
+
+func TestCopy_destinationIsDirectory(t *testing.T) {
+	baseDir := t.TempDir()
+	targetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "CLAUDE.md"), []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(targetDir, "CLAUDE.md"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(&hooks.NoOp{})
+	if err := svc.Copy([]string{"CLAUDE.md"}, baseDir, targetDir, nil); err == nil {
+		t.Error("Copy() = nil, want an error when the destination is a directory")
+	}
 }

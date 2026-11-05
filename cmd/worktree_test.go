@@ -101,7 +101,9 @@ func TestWorktreeList_withClonedProject(t *testing.T) {
 	}
 	cfgPath := writeConfig(t, projectsDir)
 	// May return error (not a git repo); that's fine — no panic is the goal.
-	runCmd(t, "--config", cfgPath, "list", "worktree") //nolint:errcheck
+	if err := runCmd(t, "--config", cfgPath, "list", "worktree"); err != nil {
+		t.Logf("list worktree returned error (acceptable): %v", err)
+	}
 }
 
 // TestWorktreeDelete_abortedPrompt exercises the delete confirmation flow by

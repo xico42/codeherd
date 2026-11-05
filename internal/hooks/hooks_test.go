@@ -1,13 +1,13 @@
 package hooks
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"github.com/xico42/codeherd/internal/config"
 	"github.com/xico42/codeherd/internal/semconv"
+	"github.com/xico42/codeherd/internal/testutil"
 )
 
 func TestTrigger_EmptyCommand_NoOp(t *testing.T) {
@@ -57,10 +57,7 @@ func TestTrigger_EnvironmentVariables(t *testing.T) {
 		t.Fatalf("Trigger() error = %v", err)
 	}
 
-	data, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
+	data := testutil.ReadFile(t, dir, "out.txt")
 	got := string(data)
 	if got != "myapp\n" {
 		t.Errorf("env var not passed: got %q, want %q", got, "myapp\n")
@@ -81,10 +78,7 @@ func TestTrigger_WorkingDirectory(t *testing.T) {
 		t.Fatalf("Trigger() error = %v", err)
 	}
 
-	data, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
+	data := testutil.ReadFile(t, dir, "pwd.txt")
 	// Resolve symlinks for macOS /private/tmp
 	resolvedDir, _ := filepath.EvalSymlinks(dir)
 	got := string(data)

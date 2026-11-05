@@ -27,7 +27,7 @@ type ProfileRegistry struct {
 // Errors when the file is missing or malformed.
 func LoadProfile(profilesDir, name string) (*Config, error) {
 	path := filepath.Join(profilesDir, name+".toml")
-	data, err := os.ReadFile(path)
+	data, err := readFileIn(profilesDir, name+".toml")
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("profile %q not found at %s", name, path)
@@ -42,6 +42,21 @@ func LoadProfile(profilesDir, name string) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// readFileIn reads name from dir. The read goes through an os.Root, so a name
+// like "../x" cannot reach outside dir.
+func readFileIn(dir, name string) (data []byte, err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", dir, err)
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	data, err = root.ReadFile(name)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", name, err)
+	}
+	return data, nil
 }
 
 // loadProfileMode resolves the active profile, parses it, warns about
@@ -132,7 +147,7 @@ func ProfileNamesFor(path string) []string {
 		}
 		path = filepath.Join(home, ".config", "codeherd", "config.toml")
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path)) // user-named, as in Load
 	if err != nil {
 		return nil
 	}

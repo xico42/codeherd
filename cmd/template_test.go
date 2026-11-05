@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xico42/codeherd/internal/testutil"
 )
 
 // TestTemplate_noArgs_usesCurrentDir verifies that running "template" with no
@@ -76,10 +78,7 @@ func TestTemplate_processesHerdFiles(t *testing.T) {
 	}
 
 	// Check the rendered file was written
-	out, err := os.ReadFile(filepath.Join(dir, ".env"))
-	if err != nil {
-		t.Fatalf("rendered file not found: %v", err)
-	}
+	out := testutil.ReadFile(t, dir, ".env")
 	if !strings.Contains(string(out), "PROJECT=myapp") {
 		t.Errorf("expected PROJECT=myapp, got: %s", out)
 	}
@@ -152,10 +151,7 @@ func TestTemplate_resolveProjectFromDir(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	out, err := os.ReadFile(filepath.Join(wtDir, ".env"))
-	if err != nil {
-		t.Fatalf("rendered file not found: %v", err)
-	}
+	out := testutil.ReadFile(t, wtDir, ".env")
 	if !strings.Contains(string(out), "PROJECT=myapp") {
 		t.Errorf("expected PROJECT=myapp, got: %s", out)
 	}

@@ -24,72 +24,61 @@ func (m Model) attachAction() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	cfg := m.cfg
-	hrd := m.herd
-
 	switch sel.Group {
 	case groupAgent:
 		// Already has agent — attach using stable session ID (unaffected by renames).
 		sessionID := sel.AgentSessionID
 		return m, func() tea.Msg { return attachMsg{session: sessionID} }
 
-	case groupWorktree:
-		agents := cfg.AgentNames()
-		if len(agents) == 0 {
-			m.statusMsg = "no agents configured — add [agents.<name>] to config"
-			return m, nil
-		}
+	case groupWorktree, groupProject:
+		return m.startAgent(sel)
+	}
+	return m, nil
+}
 
-		ref := sel.Ref // identity from herd.List — never a rebuilt display branch
-
-		if len(agents) == 1 {
-			// Single agent — skip picker. The worktree already exists, so no
-			// EnsureWorkspace is needed; go straight to the session.
-			agentName := agents[0]
-			return m, func() tea.Msg {
-				handle, err := hrd.Launch(ref, herd.LaunchOpts{Agent: agentName})
-				if err != nil {
-					return errMsg{err: err}
-				}
-				return attachMsg{session: handle.ID}
-			}
-		}
-
-		// Multiple agents — show picker.
-		m.agentPicker = newAgentPicker(cfg, cfg.Defaults.Agent, &agentPickerPending{ref: ref, herd: hrd})
-		m.screen = screenAgentPicker
+// startAgent starts an agent session for a worktree or project item: directly
+// when exactly one agent is configured, through the agent picker when there
+// are several.
+func (m Model) startAgent(sel *Item) (tea.Model, tea.Cmd) {
+	agents := m.cfg.AgentNames()
+	if len(agents) == 0 {
+		m.statusMsg = "no agents configured — add [agents.<name>] to config"
 		return m, nil
+	}
 
-	case groupProject:
-		agents := cfg.AgentNames()
-		if len(agents) == 0 {
-			m.statusMsg = "no agents configured — add [agents.<name>] to config"
-			return m, nil
-		}
+	// A worktree's ref is the identity from herd.List — never a rebuilt display
+	// branch — and the worktree exists already.
+	ref, ensure := sel.Ref, false
+	if sel.Group == groupProject {
+		// No workspace yet — mint a Ref from the default branch, and create
+		// the workspace (cloning if needed) before the session starts.
+		ref, ensure = m.herd.Ref(sel.Project, m.defaultBranch(sel.Project)), true
+	}
 
-		// No workspace yet — mint a Ref from the default branch.
-		ref := hrd.Ref(sel.Project, m.defaultBranch(sel.Project))
-
-		if len(agents) == 1 {
-			agentName := agents[0]
-			return m, func() tea.Msg {
-				if _, err := hrd.EnsureWorkspace(ref, herd.EnsureOpts{AutoClone: true, Provision: true}); err != nil && !errors.Is(err, herd.ErrWorktreeExists) {
-					return errMsg{err: err}
-				}
-				handle, err := hrd.Launch(ref, herd.LaunchOpts{Agent: agentName})
-				if err != nil {
-					return errMsg{err: err}
-				}
-				return attachMsg{session: handle.ID}
-			}
-		}
-
-		// Multiple agents — show picker.
-		m.agentPicker = newAgentPicker(cfg, cfg.Defaults.Agent, &agentPickerPending{ref: ref, herd: hrd})
+	if len(agents) > 1 {
+		m.agentPicker = newAgentPicker(m.cfg, m.cfg.Defaults.Agent, &agentPickerPending{ref: ref, herd: m.herd})
 		m.screen = screenAgentPicker
 		return m, nil
 	}
-	return m, nil
+	hrd, agentName := m.herd, agents[0]
+	return m, func() tea.Msg { return launchAgent(hrd, ref, agentName, ensure) }
+}
+
+// launchAgent runs in a tea.Cmd: it creates the workspace when ensure is set
+// (an existing worktree is fine), launches the agent session and returns the
+// message to attach to it, or the error.
+func launchAgent(hrd *herd.Herd, ref herd.Ref, agentName string, ensure bool) tea.Msg {
+	if ensure {
+		_, err := hrd.EnsureWorkspace(ref, herd.EnsureOpts{AutoClone: true, Provision: true})
+		if err != nil && !errors.Is(err, herd.ErrWorktreeExists) {
+			return errMsg{err: err}
+		}
+	}
+	handle, err := hrd.Launch(ref, herd.LaunchOpts{Agent: agentName})
+	if err != nil {
+		return errMsg{err: err}
+	}
+	return attachMsg{session: handle.ID}
 }
 
 // updateAgentPicker handles key events in the agent picker sub-screen.

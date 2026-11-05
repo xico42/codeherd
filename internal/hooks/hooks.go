@@ -1,3 +1,4 @@
+// Package hooks runs the lifecycle hook commands configured by the user.
 package hooks
 
 import (

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 )
 
@@ -148,7 +149,7 @@ func (r *RealRunner) Remotes(cloneDir string) ([]string, error) {
 		return nil, fmt.Errorf("git remote: %w", err)
 	}
 	var names []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if s := strings.TrimSpace(line); s != "" {
 			names = append(names, s)
 		}
@@ -208,11 +209,9 @@ func parseWorktreePorcelain(output string) []WorktreeInfo {
 			current.Branch = strings.TrimPrefix(ref, "refs/heads/")
 		case line == "detached":
 			current.Detached = true
-		case line == "":
-			if current.Path != "" {
-				result = append(result, current)
-				current = WorktreeInfo{}
-			}
+		case line == "" && current.Path != "":
+			result = append(result, current)
+			current = WorktreeInfo{}
 		}
 	}
 	if current.Path != "" {
@@ -226,7 +225,7 @@ func parseWorktreePorcelain(output string) []WorktreeInfo {
 // (which may contain slashes). Symbolic */HEAD entries are skipped.
 func parseRemoteBranches(output string) []RemoteBranch {
 	var result []RemoteBranch
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		s := strings.TrimSpace(line)
 		if s == "" {
 			continue
@@ -251,10 +250,8 @@ func parseRemoteBranches(output string) []RemoteBranch {
 func ParseRef(remotes []string, ref string) (remote, branch string, explicit bool) {
 	if idx := strings.Index(ref, "/"); idx > 0 {
 		candidate := ref[:idx]
-		for _, r := range remotes {
-			if r == candidate {
-				return candidate, ref[idx+1:], true
-			}
+		if slices.Contains(remotes, candidate) {
+			return candidate, ref[idx+1:], true
 		}
 	}
 	return "origin", ref, false

@@ -53,7 +53,7 @@ func TestRef_tmuxNameDiffersByType(t *testing.T) {
 func TestWithProfile_swapsConfigAndProfile(t *testing.T) {
 	dir := t.TempDir()
 	toml := "[projects.myapp]\nrepo = \"git@github.com:user/other.git\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "home.toml"), []byte(toml), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "home.toml"), []byte(toml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	reg := &config.ProfileRegistry{Active: "work", Names: []string{"work", "home"}, ProfilesDir: dir}

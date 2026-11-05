@@ -36,7 +36,7 @@ func TestCopy_SamePathEntry(t *testing.T) {
 	baseDir := t.TempDir()
 	targetDir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(baseDir, "CLAUDE.md"), []byte("hello"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(baseDir, "CLAUDE.md"), []byte("hello"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -58,7 +58,7 @@ func TestCopy_ColonEntry(t *testing.T) {
 	srcDir := t.TempDir()
 
 	srcFile := filepath.Join(srcDir, "safety.md")
-	if err := os.WriteFile(srcFile, []byte("rules"), 0o644); err != nil {
+	if err := os.WriteFile(srcFile, []byte("rules"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -78,10 +78,10 @@ func TestCopy_CreatesIntermediateDirectories(t *testing.T) {
 	baseDir := t.TempDir()
 	targetDir := t.TempDir()
 
-	if err := os.MkdirAll(filepath.Join(baseDir, "src"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(baseDir, "src"), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(baseDir, "src", "config.json"), []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(baseDir, "src", "config.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -118,7 +118,7 @@ func TestCopy_EmptyFilesList(t *testing.T) {
 func TestCopy_TriggersHooks(t *testing.T) {
 	baseDir := t.TempDir()
 	targetDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(baseDir, "file.txt"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(baseDir, "file.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestCopy_TriggersHooks(t *testing.T) {
 func TestCopy_HookFailureStops(t *testing.T) {
 	baseDir := t.TempDir()
 	targetDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(baseDir, "file.txt"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(baseDir, "file.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -165,7 +165,7 @@ func TestCopy_HookFailureStops(t *testing.T) {
 func TestCopy_PostHookFailure(t *testing.T) {
 	baseDir := t.TempDir()
 	targetDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(baseDir, "file.txt"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(baseDir, "file.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 

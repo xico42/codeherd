@@ -15,7 +15,7 @@ func writeRunConfig(t *testing.T) string {
 cmd = "echo"
 args = ["hello"]
 `
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return cfgPath

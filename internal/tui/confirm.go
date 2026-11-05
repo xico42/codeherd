@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
@@ -90,6 +91,25 @@ func (c *confirmModel) Update(msg tea.Msg) (*confirmModel, tea.Cmd) {
 	return c, nil
 }
 
+// sessionsWarning lists the target's active sessions, or returns "" when it
+// has none.
+func sessionsWarning(target Item, warnStyle lipgloss.Style) string {
+	if !target.HasAgent && !target.HasShell {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(warnStyle.Render("  ⚠ Active sessions detected:"))
+	b.WriteString("\n")
+	if target.HasAgent {
+		fmt.Fprintf(&b, "    • Agent session (%s)\n", cmp.Or(target.AgentStatus, "active"))
+	}
+	if target.HasShell {
+		b.WriteString("    • Shell session (running)\n")
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 func (c *confirmModel) View() string {
 	titleStyle := lipgloss.NewStyle().Bold(true)
 	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
@@ -98,22 +118,7 @@ func (c *confirmModel) View() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n────\n", titleStyle.Render(fmt.Sprintf("Delete — %s/%s", c.target.Project, c.target.Branch)))
 
-	// Active sessions warning
-	if c.target.HasAgent || c.target.HasShell {
-		b.WriteString(warnStyle.Render("  ⚠ Active sessions detected:"))
-		b.WriteString("\n")
-		if c.target.HasAgent {
-			status := c.target.AgentStatus
-			if status == "" {
-				status = "active"
-			}
-			fmt.Fprintf(&b, "    • Agent session (%s)\n", status)
-		}
-		if c.target.HasShell {
-			b.WriteString("    • Shell session (running)\n")
-		}
-		b.WriteString("\n")
-	}
+	b.WriteString(sessionsWarning(c.target, warnStyle))
 
 	// Choices
 	for i, ch := range c.choices {

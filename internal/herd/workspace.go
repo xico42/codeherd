@@ -92,36 +92,16 @@ func (h *Herd) EnsureWorkspace(ref Ref, opts EnsureOpts) (Workspace, error) {
 		return Workspace{}, errors.New("cannot combine a start point with a tracking ref")
 	}
 
-	cloneDir, err := h.cloneDir(ref.Project)
+	cloneDir, err := h.ensureCloned(ref.Project, opts.AutoClone)
 	if err != nil {
 		return Workspace{}, err
-	}
-	if opts.AutoClone {
-		// Already cloned is the normal case, not a failure.
-		if err := h.Clone(ref.Project); err != nil && !errors.Is(err, ErrAlreadyCloned) {
-			return Workspace{}, err
-		}
-	}
-	if _, err := os.Stat(cloneDir); os.IsNotExist(err) {
-		return Workspace{}, fmt.Errorf("%w: %s", ErrNotCloned, ref.Project)
 	}
 
 	// A tracking ref decides the local branch name, so resolve it before the
 	// ref is used for anything path-shaped.
-	remoteRef := ""
-	if opts.Track != "" {
-		remotes, _ := h.git.Remotes(cloneDir)
-		remote, remoteBranch, _ := git.ParseRef(remotes, opts.Track)
-		if ref.Branch == "" {
-			ref.Branch = remoteBranch
-		}
-		remoteRef = remote + "/" + remoteBranch
-		if has, _ := h.git.HasLocalBranch(cloneDir, ref.Branch); has {
-			return Workspace{}, fmt.Errorf("%w: %s", ErrLocalBranchExists, ref.Branch)
-		}
-		if err := h.git.Fetch(cloneDir, remote, remoteBranch); err != nil {
-			return Workspace{}, fmt.Errorf("fetching %s: %w", remoteRef, err)
-		}
+	ref, remoteRef, err := h.resolveTrack(ref, cloneDir, opts.Track)
+	if err != nil {
+		return Workspace{}, err
 	}
 
 	wtPath, err := h.worktreePath(ref)
@@ -132,33 +112,8 @@ func (h *Herd) EnsureWorkspace(ref Ref, opts EnsureOpts) (Workspace, error) {
 		return Workspace{}, fmt.Errorf("%w: %s/%s", ErrWorktreeExists, ref.Project, ref.Branch)
 	}
 
-	p := h.cfg.Projects[ref.Project]
-	hook := h.hookFor(ref.Project)
-	attrs := map[string]string{
-		semconv.HookAttrProject:      ref.Project,
-		semconv.HookAttrBranch:       ref.Branch,
-		semconv.HookAttrRepo:         p.Repo,
-		semconv.HookAttrCloneDir:     cloneDir,
-		semconv.HookAttrWorktreePath: wtPath,
-	}
-	if err := hook.Trigger(semconv.HookPreWorktree, attrs, wtPath); err != nil {
-		return Workspace{}, fmt.Errorf("pre-worktree hook: %w", err)
-	}
-
-	root, err := h.worktreesRoot(ref.Project)
-	if err != nil {
+	if err := h.createWorktree(ref, cloneDir, wtPath, remoteRef, opts); err != nil {
 		return Workspace{}, err
-	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return Workspace{}, fmt.Errorf("creating worktrees dir: %w", err)
-	}
-
-	if err := h.addWorktree(ref, cloneDir, wtPath, remoteRef, opts); err != nil {
-		return Workspace{}, err
-	}
-
-	if err := hook.Trigger(semconv.HookPostWorktree, attrs, wtPath); err != nil {
-		return Workspace{}, fmt.Errorf("post-worktree hook: %w", err)
 	}
 
 	if opts.Provision {
@@ -173,6 +128,81 @@ func (h *Herd) EnsureWorkspace(ref Ref, opts EnsureOpts) (Workspace, error) {
 		IsMain:        wtPath == cloneDir,
 		DisplayBranch: ref.Branch,
 	}, nil
+}
+
+// ensureCloned returns the project's clone dir, cloning it first when
+// autoClone is set. Already cloned is the normal case, not a failure.
+func (h *Herd) ensureCloned(project string, autoClone bool) (string, error) {
+	cloneDir, err := h.cloneDir(project)
+	if err != nil {
+		return "", err
+	}
+	if autoClone {
+		if err := h.Clone(project); err != nil && !errors.Is(err, ErrAlreadyCloned) {
+			return "", err
+		}
+	}
+	if _, err := os.Stat(cloneDir); os.IsNotExist(err) {
+		return "", fmt.Errorf("%w: %s", ErrNotCloned, project)
+	}
+	return cloneDir, nil
+}
+
+// resolveTrack applies a tracking ref ("[<remote>/]<branch>"): it names the
+// local branch after the remote one when ref has no branch, refuses a local
+// branch that already exists, and fetches the remote branch. It returns the
+// ref to use and "<remote>/<branch>" — or ref unchanged and "" when track is
+// empty.
+func (h *Herd) resolveTrack(ref Ref, cloneDir, track string) (Ref, string, error) {
+	if track == "" {
+		return ref, "", nil
+	}
+	remotes, _ := h.git.Remotes(cloneDir)
+	remote, remoteBranch, _ := git.ParseRef(remotes, track)
+	if ref.Branch == "" {
+		ref.Branch = remoteBranch
+	}
+	remoteRef := remote + "/" + remoteBranch
+	if has, _ := h.git.HasLocalBranch(cloneDir, ref.Branch); has {
+		return Ref{}, "", fmt.Errorf("%w: %s", ErrLocalBranchExists, ref.Branch)
+	}
+	if err := h.git.Fetch(cloneDir, remote, remoteBranch); err != nil {
+		return Ref{}, "", fmt.Errorf("fetching %s: %w", remoteRef, err)
+	}
+	return ref, remoteRef, nil
+}
+
+// createWorktree creates the worktree at wtPath, between the pre- and
+// post-worktree hooks.
+func (h *Herd) createWorktree(ref Ref, cloneDir, wtPath, remoteRef string, opts EnsureOpts) error {
+	hook := h.hookFor(ref.Project)
+	attrs := map[string]string{
+		semconv.HookAttrProject:      ref.Project,
+		semconv.HookAttrBranch:       ref.Branch,
+		semconv.HookAttrRepo:         h.cfg.Projects[ref.Project].Repo,
+		semconv.HookAttrCloneDir:     cloneDir,
+		semconv.HookAttrWorktreePath: wtPath,
+	}
+	if err := hook.Trigger(semconv.HookPreWorktree, attrs, wtPath); err != nil {
+		return fmt.Errorf("pre-worktree hook: %w", err)
+	}
+
+	root, err := h.worktreesRoot(ref.Project)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		return fmt.Errorf("creating worktrees dir: %w", err)
+	}
+
+	if err := h.addWorktree(ref, cloneDir, wtPath, remoteRef, opts); err != nil {
+		return err
+	}
+
+	if err := hook.Trigger(semconv.HookPostWorktree, attrs, wtPath); err != nil {
+		return fmt.Errorf("post-worktree hook: %w", err)
+	}
+	return nil
 }
 
 // addWorktree runs the git call that actually creates the worktree. The three
@@ -293,43 +323,56 @@ func (h *Herd) List(project string) ([]Workspace, error) {
 	}
 	byName := make(map[string][]Handle, len(sessions))
 	for _, hd := range sessions {
-		key := hd.Canonical
-		byName[key] = append(byName[key], hd)
+		byName[hd.Canonical] = append(byName[hd.Canonical], hd)
 	}
 
 	var out []Workspace
 	for _, name := range names {
-		cloneDir, err := h.cloneDir(name)
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(cloneDir); os.IsNotExist(err) {
-			continue
-		}
-		infos, err := h.git.List(cloneDir)
-		if err != nil {
-			continue
-		}
-		defaultBranch := h.cfg.Projects[name].DefaultBranch
-		for _, wt := range infos {
-			ws := h.workspaceFrom(name, cloneDir, defaultBranch, wt)
-			for i := range byName[ws.Ref.CanonicalName()] {
-				hd := byName[ws.Ref.CanonicalName()][i]
-				switch hd.Type {
-				case SessionTypeAgent:
-					ws.Agent = &hd
-				case SessionTypeShell:
-					ws.Shell = &hd
-				}
-			}
-			// Display is resolved after the join: a non-main worktree's original
-			// branch lives on its session, so DisplayBranch/HeadHint cannot be
-			// decided until the sessions are attached.
-			resolveDisplay(&ws, defaultBranch, wt)
-			out = append(out, ws)
-		}
+		out = append(out, h.projectWorkspaces(name, byName)...)
 	}
 	return out, nil
+}
+
+// projectWorkspaces lists one project's worktrees joined with their sessions,
+// keyed by canonical name in byName. A project that is not cloned, or whose
+// worktrees git cannot list, contributes nothing.
+func (h *Herd) projectWorkspaces(name string, byName map[string][]Handle) []Workspace {
+	cloneDir, err := h.cloneDir(name)
+	if err != nil {
+		return nil
+	}
+	if _, err := os.Stat(cloneDir); os.IsNotExist(err) {
+		return nil
+	}
+	infos, err := h.git.List(cloneDir)
+	if err != nil {
+		return nil
+	}
+	defaultBranch := h.cfg.Projects[name].DefaultBranch
+	var out []Workspace
+	for _, wt := range infos {
+		ws := h.workspaceFrom(name, cloneDir, defaultBranch, wt)
+		attachSessions(&ws, byName[ws.Ref.CanonicalName()])
+		// Display is resolved after the join: a non-main worktree's original
+		// branch lives on its session, so DisplayBranch/HeadHint cannot be
+		// decided until the sessions are attached.
+		resolveDisplay(&ws, defaultBranch, wt)
+		out = append(out, ws)
+	}
+	return out
+}
+
+// attachSessions sets ws's agent and shell sessions from its handles.
+func attachSessions(ws *Workspace, handles []Handle) {
+	for i := range handles {
+		hd := handles[i]
+		switch hd.Type {
+		case SessionTypeAgent:
+			ws.Agent = &hd
+		case SessionTypeShell:
+			ws.Shell = &hd
+		}
+	}
 }
 
 // workspaceFrom derives a workspace's identity from one git worktree entry.
@@ -412,15 +455,8 @@ func (h *Herd) Teardown(ref Ref, opts TeardownOpts) error {
 	}
 
 	if !opts.Force {
-		running, err := h.handles()
-		if err != nil {
+		if err := h.refuseRunningSessions(ref); err != nil {
 			return err
-		}
-		canonical := ref.CanonicalName()
-		for _, hd := range running {
-			if hd.Canonical == canonical {
-				return fmt.Errorf("%w: %s (%s)", ErrSessionRunning, canonical, hd.Type)
-			}
 		}
 	}
 
@@ -429,6 +465,21 @@ func (h *Herd) Teardown(ref Ref, opts TeardownOpts) error {
 	}
 	if err := h.git.Remove(cloneDir, wtPath); err != nil {
 		return fmt.Errorf("removing worktree: %w", err)
+	}
+	return nil
+}
+
+// refuseRunningSessions fails with ErrSessionRunning when ref has any session.
+func (h *Herd) refuseRunningSessions(ref Ref) error {
+	running, err := h.handles()
+	if err != nil {
+		return err
+	}
+	canonical := ref.CanonicalName()
+	for _, hd := range running {
+		if hd.Canonical == canonical {
+			return fmt.Errorf("%w: %s (%s)", ErrSessionRunning, canonical, hd.Type)
+		}
 	}
 	return nil
 }

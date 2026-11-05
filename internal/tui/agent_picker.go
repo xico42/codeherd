@@ -105,7 +105,7 @@ func (p *agentPickerModel) View() string {
 		} else {
 			style = style.Faint(true)
 		}
-		sb.WriteString(fmt.Sprintf("%s%s\n", cursor, style.Render(name)))
+		fmt.Fprintf(&sb, "%s%s\n", cursor, style.Render(name))
 	}
 	sb.WriteString("────\nEnter: select  |  Esc: cancel  |  j/k: navigate")
 	return sb.String()

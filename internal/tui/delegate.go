@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"io"
 	"strings"
 
@@ -34,69 +33,84 @@ func (d itemDelegate) Height() int                             { return 2 }
 func (d itemDelegate) Spacing() int                            { return 1 }
 func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 
+// Render writes one list row. The list.ItemDelegate interface gives it no way
+// to report a write error, and bubbles renders rows into a strings.Builder,
+// whose writes cannot fail — so the result is discarded on purpose.
 func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
 	item, ok := listItem.(Item)
 	if !ok {
 		return
 	}
+	_, _ = io.WriteString(w, renderRow(item, index == m.Index()))
+}
 
-	isSelected := index == m.Index()
+// renderRow formats an item as two lines: its title, and its status tags.
+func renderRow(item Item, selected bool) string {
+	title := rowTitle(item)
+	tags := rowTags(item)
+	if selected {
+		return cursorStyle.Render("▸ ") + selectedStyle.Render(title) + "\n" + tags
+	}
+	return "  " + title + "\n" + tags
+}
 
-	// Line 1: project / branch (+ head-state hint when HEAD diverged). The label
-	// is formatted by the same herd.FormatBranchLabel the CLI uses, so both
-	// surfaces render a diverged or detached worktree identically.
-	line1 := item.Project
+// rowTitle is "project / branch", plus the head-state hint when HEAD diverged.
+// The label is formatted by the same herd.FormatBranchLabel the CLI uses, so
+// both surfaces render a diverged or detached worktree identically.
+func rowTitle(item Item) string {
 	if label := herd.FormatBranchLabel(item.Branch, item.HeadHint); label != "" {
-		line1 += " / " + label
+		return item.Project + " / " + label
 	}
+	return item.Project
+}
 
-	cursor := "  "
-	if isSelected {
-		cursor = cursorStyle.Render("▸ ")
-		line1 = selectedStyle.Render(line1)
-	} else {
-		line1 = "  " + line1
-	}
-
-	// Line 2: status tags
+// rowTags renders the item's status tags, indented under the title, or ""
+// when it has none.
+func rowTags(item Item) string {
 	var tags []string
-	switch {
-	case item.HasAgent && item.AgentStatus == semconv.StatusWaiting:
-		tags = append(tags, waitingTag.Render("WAITING FOR INPUT"))
-	case item.HasAgent && item.AgentStatus == semconv.StatusRunning:
-		tags = append(tags, runningTag.Render("running"))
-	case item.HasAgent:
-		tags = append(tags, runningTag.Render("agent"))
+	if tag := agentTag(item); tag != "" {
+		tags = append(tags, tag)
 	}
-
 	if item.HasShell {
 		tags = append(tags, shellTag.Render("shell"))
 	}
-
 	if item.Group == groupProject {
-		if item.Cloned {
-			tags = append(tags, clonedTag.Render("cloned"))
-		} else {
-			tags = append(tags, notClonedTag.Render("not cloned"))
-		}
+		tags = append(tags, clonedStateTag(item.Cloned))
 	}
-
 	if item.HasAgent && item.Annotation != "" {
-		ann := item.Annotation
-		if len(ann) > 60 {
-			ann = ann[:57] + "..."
-		}
-		tags = append(tags, dimStyle.Render(ann))
+		tags = append(tags, dimStyle.Render(truncateAnnotation(item.Annotation)))
 	}
-
-	line2 := "    " + strings.Join(tags, "  ")
 	if len(tags) == 0 {
-		line2 = ""
+		return ""
 	}
+	return "    " + strings.Join(tags, "  ")
+}
 
-	if isSelected {
-		fmt.Fprintf(w, "%s%s\n%s", cursor, line1, line2)
-	} else {
-		fmt.Fprintf(w, "%s\n%s", line1, line2)
+// agentTag shows the agent's state, or "" when the item has no agent.
+func agentTag(item Item) string {
+	switch {
+	case !item.HasAgent:
+		return ""
+	case item.AgentStatus == semconv.StatusWaiting:
+		return waitingTag.Render("WAITING FOR INPUT")
+	case item.AgentStatus == semconv.StatusRunning:
+		return runningTag.Render("running")
+	default:
+		return runningTag.Render("agent")
 	}
+}
+
+func clonedStateTag(cloned bool) string {
+	if cloned {
+		return clonedTag.Render("cloned")
+	}
+	return notClonedTag.Render("not cloned")
+}
+
+// truncateAnnotation keeps an annotation within 60 bytes.
+func truncateAnnotation(ann string) string {
+	if len(ann) > 60 {
+		return ann[:57] + "..."
+	}
+	return ann
 }

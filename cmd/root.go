@@ -1,3 +1,5 @@
+// Package cmd is codeherd's CLI front end: the Cobra command tree, its
+// flags, and the translation of internal/herd errors into user-facing output.
 package cmd
 
 import (

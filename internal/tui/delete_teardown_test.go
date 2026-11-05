@@ -48,7 +48,7 @@ func teardownHerd(t *testing.T, runner tmux.Runner, registry *config.ProfileRegi
 		},
 	}
 	wt := filepath.Join(dir, "github.com", "user", "myapp__worktrees", branch)
-	if err := os.MkdirAll(wt, 0o755); err != nil {
+	if err := os.MkdirAll(wt, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return herd.New(cfg, registry, herd.Deps{Tmux: runner, Git: git.NewRealRunner()})

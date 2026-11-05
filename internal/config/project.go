@@ -40,30 +40,9 @@ func RepoPath(repoURL string) (string, error) {
 		return "", fmt.Errorf("empty repo URL")
 	}
 
-	var host, path string
-
-	// SCP-style: git@host:path (no scheme, has colon but not ://)
-	if strings.Contains(repoURL, ":") && !strings.Contains(repoURL, "://") {
-		at := strings.Index(repoURL, ":")
-		hostPart := repoURL[:at]
-		path = repoURL[at+1:]
-
-		// Extract host from user@host
-		if idx := strings.Index(hostPart, "@"); idx >= 0 {
-			host = hostPart[idx+1:]
-		} else {
-			host = hostPart
-		}
-	} else {
-		u, err := url.Parse(repoURL)
-		if err != nil {
-			return "", fmt.Errorf("parsing repo URL %q: %w", repoURL, err)
-		}
-		if u.Host == "" {
-			return "", fmt.Errorf("repo URL %q has no host", repoURL)
-		}
-		host = u.Hostname()
-		path = u.Path
+	host, path, err := splitRepoURL(repoURL)
+	if err != nil {
+		return "", err
 	}
 
 	// Clean up path
@@ -75,4 +54,26 @@ func RepoPath(repoURL string) (string, error) {
 	}
 
 	return host + "/" + path, nil
+}
+
+// splitRepoURL returns the host and path of an SCP-style remote
+// (git@host:path — a colon but no scheme) or of a scheme://host/path URL.
+func splitRepoURL(repoURL string) (host, path string, err error) {
+	if strings.Contains(repoURL, ":") && !strings.Contains(repoURL, "://") {
+		hostPart, path, _ := strings.Cut(repoURL, ":")
+		// Drop the user from user@host.
+		if _, after, ok := strings.Cut(hostPart, "@"); ok {
+			return after, path, nil
+		}
+		return hostPart, path, nil
+	}
+
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return "", "", fmt.Errorf("parsing repo URL %q: %w", repoURL, err)
+	}
+	if u.Host == "" {
+		return "", "", fmt.Errorf("repo URL %q has no host", repoURL)
+	}
+	return u.Hostname(), u.Path, nil
 }

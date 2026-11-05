@@ -72,6 +72,7 @@ All commands run locally — they execute git/tmux/filesystem directly on whatev
 - **`internal/tui`** — Bubble Tea v2 dashboard with session/worktree/project views
 - **`internal/herdtemplate`** — processes `.herd` template files with Go `text/template`; custom funcs: `port "name"` (deterministic FNV-1a hash), `env "VAR" "default"`; renders any `*.herd` file to its unsuffixed counterpart
 - **`internal/semconv`** — semantic conventions (session naming, path conventions)
+- **`internal/testutil`** — test helpers shared across packages: `ReadFile` (through an `os.Root`), `Git`/`InitRepo`, `IsolateTmux`/`Tmux`
 
 ### Config and state paths (XDG-compliant)
 

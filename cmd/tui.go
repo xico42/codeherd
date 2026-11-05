@@ -31,34 +31,13 @@ func runTUIInTmux(tmuxClient *tmux.Client) error {
 		if err != nil {
 			return fmt.Errorf("detecting tmux session: %w", err)
 		}
-
-		// Already in the codeherd session — select TUI window,
-		// respawning the pane first if it is dead.
 		if currentSession == sessionName {
-			if err := respawnIfDead(tmuxClient, sessionName); err != nil {
-				return err
-			}
-			if err := tmuxClient.SelectWindow(sessionName + ":0"); err != nil {
-				return fmt.Errorf("selecting window: %w", err)
-			}
-			return nil
+			return showTUIWindow(tmuxClient, sessionName)
 		}
 	}
 
-	// Ensure codeherd session exists.
-	exists, err := tmuxClient.HasSession(sessionName)
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if !exists {
-		if err := createCodeherdSession(tmuxClient, sessionName); err != nil {
-			return err
-		}
-	} else {
-		// Session exists — respawn the TUI if the pane is dead.
-		if err := respawnIfDead(tmuxClient, sessionName); err != nil {
-			return err
-		}
+	if err := ensureCodeherdSession(tmuxClient, sessionName); err != nil {
+		return err
 	}
 
 	// Inside tmux, different session — switch client.
@@ -71,6 +50,31 @@ func runTUIInTmux(tmuxClient *tmux.Client) error {
 
 	// Not inside tmux — exec into tmux attach.
 	return execTmuxAttach(sessionName)
+}
+
+// showTUIWindow selects the TUI window of the codeherd session the user is
+// already in, respawning the pane first if it is dead.
+func showTUIWindow(tmuxClient *tmux.Client, sessionName string) error {
+	if err := respawnIfDead(tmuxClient, sessionName); err != nil {
+		return err
+	}
+	if err := tmuxClient.SelectWindow(sessionName + ":0"); err != nil {
+		return fmt.Errorf("selecting window: %w", err)
+	}
+	return nil
+}
+
+// ensureCodeherdSession makes sure the codeherd session exists with a live TUI
+// pane: it creates the session, or respawns the TUI if its pane died.
+func ensureCodeherdSession(tmuxClient *tmux.Client, sessionName string) error {
+	exists, err := tmuxClient.HasSession(sessionName)
+	if err != nil {
+		return fmt.Errorf("checking session: %w", err)
+	}
+	if !exists {
+		return createCodeherdSession(tmuxClient, sessionName)
+	}
+	return respawnIfDead(tmuxClient, sessionName)
 }
 
 // createCodeherdSession creates the codeherd tmux session running the TUI.

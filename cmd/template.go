@@ -42,51 +42,27 @@ and --branch flags as fallbacks.`,
 }
 
 func (c *TemplateCmd) Run(cmd *cobra.Command, args []string) error {
-	out := newPrinter(cmd.OutOrStdout())
-	dir := "."
-	if len(args) == 1 {
-		dir = args[0]
-	}
-
-	absDir, err := filepath.Abs(dir)
+	target, err := c.resolveTarget(args)
 	if err != nil {
-		return fmt.Errorf("resolving path: %w", err)
+		return err
 	}
 
-	project := c.Project
-	if project == "" {
-		project = resolveProjectFromDir(absDir)
-	}
-	if project == "" {
-		return fmt.Errorf("could not resolve project for %s; use --project flag", absDir)
-	}
-
-	branch := c.Branch
-	if branch == "" {
-		branch = detectGitBranch(absDir)
-	}
-	if branch == "" {
-		return fmt.Errorf("could not detect branch for %s; use --branch flag", absDir)
-	}
-
-	projCfg := cfg.Projects[project]
-	hook := hooks.New(projCfg.Hooks)
-
+	out := newPrinter(cmd.OutOrStdout())
 	if !c.DryRun {
 		out.Printf("Processing templates...  ")
 	}
 
-	tmplSvc := herdtemplate.New(hook)
-	result, err := tmplSvc.Process(herdtemplate.ProcessContext{
-		Project:      project,
-		Branch:       branch,
-		WorktreePath: absDir,
-		SessionName:  h.Ref(project, branch).CanonicalName(),
+	hook := hooks.New(cfg.Projects[target.project].Hooks)
+	result, err := herdtemplate.New(hook).Process(herdtemplate.ProcessContext{
+		Project:      target.project,
+		Branch:       target.branch,
+		WorktreePath: target.dir,
+		SessionName:  h.Ref(target.project, target.branch).CanonicalName(),
 		DryRun:       c.DryRun,
 	}, map[string]string{
-		semconv.HookAttrProject:      project,
-		semconv.HookAttrBranch:       branch,
-		semconv.HookAttrWorktreePath: absDir,
+		semconv.HookAttrProject:      target.project,
+		semconv.HookAttrBranch:       target.branch,
+		semconv.HookAttrWorktreePath: target.dir,
 	})
 	if err != nil {
 		if !c.DryRun {
@@ -107,6 +83,42 @@ func (c *TemplateCmd) Run(cmd *cobra.Command, args []string) error {
 		out.Printf("  %s\n", f.Target)
 	}
 	return out.Err()
+}
+
+// templateTarget is what a template run renders for.
+type templateTarget struct {
+	dir, project, branch string
+}
+
+// resolveTarget picks the directory to render and its project and branch. The
+// flags win; otherwise the project comes from where the directory sits under
+// projects_dir and the branch from git.
+func (c *TemplateCmd) resolveTarget(args []string) (templateTarget, error) {
+	dir := "."
+	if len(args) == 1 {
+		dir = args[0]
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return templateTarget{}, fmt.Errorf("resolving path: %w", err)
+	}
+
+	project := c.Project
+	if project == "" {
+		project = resolveProjectFromDir(absDir)
+	}
+	if project == "" {
+		return templateTarget{}, fmt.Errorf("could not resolve project for %s; use --project flag", absDir)
+	}
+
+	branch := c.Branch
+	if branch == "" {
+		branch = detectGitBranch(absDir)
+	}
+	if branch == "" {
+		return templateTarget{}, fmt.Errorf("could not detect branch for %s; use --branch flag", absDir)
+	}
+	return templateTarget{dir: absDir, project: project, branch: branch}, nil
 }
 
 // resolveProjectFromDir matches a directory against configured projects by checking

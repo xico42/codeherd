@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"text/tabwriter"
+
+	"github.com/spf13/cobra"
 )
 
 // printer writes command output and keeps the first write error, so a command
@@ -48,4 +51,14 @@ func flushTable(t *tabwriter.Writer, p *printer) error {
 		return fmt.Errorf("flushing output: %w", err)
 	}
 	return nil
+}
+
+// confirm asks a yes/no question on out and reads the answer from the
+// command's stdin. Only "y" or "Y" counts as yes.
+func confirm(cmd *cobra.Command, out *printer, prompt string) bool {
+	out.Printf("%s [y/N] ", prompt)
+	scanner := bufio.NewScanner(cmd.InOrStdin())
+	scanner.Scan()
+	answer := scanner.Text()
+	return answer == "y" || answer == "Y"
 }

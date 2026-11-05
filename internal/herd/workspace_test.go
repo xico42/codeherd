@@ -96,10 +96,10 @@ func TestEnsureWorkspace_notCloned(t *testing.T) {
 
 func TestEnsureWorkspace_worktreeExists(t *testing.T) {
 	h, tmpDir := workspaceHerd(t, &fakeGit{}, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{})
@@ -111,7 +111,7 @@ func TestEnsureWorkspace_worktreeExists(t *testing.T) {
 func TestEnsureWorkspace_success(t *testing.T) {
 	g := &fakeGit{}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{})
@@ -136,7 +136,7 @@ func TestEnsureWorkspace_branchNotFound_createsFromFreshDefault(t *testing.T) {
 		HasLocalBranchFn: func(_, _ string) (bool, error) { return false, nil },
 	}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := h.EnsureWorkspace(h.Ref("myapp", "new-feature"), EnsureOpts{})
@@ -154,7 +154,7 @@ func TestEnsureWorkspace_branchNotFound_createsFromFreshDefault(t *testing.T) {
 func TestEnsureWorkspace_withFromBranch(t *testing.T) {
 	g := &fakeGit{HasLocalBranchFn: func(_, _ string) (bool, error) { return false, nil }}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := h.EnsureWorkspace(h.Ref("myapp", "my-feature"), EnsureOpts{StartPoint: "feature-auth"})
@@ -175,7 +175,7 @@ func TestEnsureWorkspace_withFromBranch(t *testing.T) {
 
 func TestEnsureWorkspace_fromAndTrackMutuallyExclusive(t *testing.T) {
 	h, tmpDir := workspaceHerd(t, &fakeGit{}, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", "x"), EnsureOpts{StartPoint: "main", Track: "origin/main"})
@@ -194,10 +194,10 @@ func TestEnsureWorkspace_fromBranch_notCloned(t *testing.T) {
 
 func TestEnsureWorkspace_fromBranch_worktreeExists(t *testing.T) {
 	h, tmpDir := workspaceHerd(t, &fakeGit{}, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{StartPoint: "main"})
@@ -209,7 +209,7 @@ func TestEnsureWorkspace_fromBranch_worktreeExists(t *testing.T) {
 func TestEnsureWorkspace_fromBranch_gitError(t *testing.T) {
 	g := &fakeGit{AddNewBranchFromFn: func(_, _, _, _ string) error { return fmt.Errorf("invalid start point") }}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{StartPoint: "nonexistent"})
@@ -232,7 +232,7 @@ func TestEnsureWorkspace_bothAddsFail(t *testing.T) {
 		AddNewBranchFromFn: func(_, _, _, _ string) error { return fmt.Errorf("already exists") },
 	}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", "new-feature"), EnsureOpts{})
@@ -243,7 +243,7 @@ func TestEnsureWorkspace_bothAddsFail(t *testing.T) {
 
 func TestEnsureWorkspace_branchFlattened(t *testing.T) {
 	h, tmpDir := workspaceHerd(t, &fakeGit{}, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := h.EnsureWorkspace(h.Ref("myapp", "feature/login"), EnsureOpts{})
@@ -275,7 +275,7 @@ func TestEnsureWorkspace_invalidRepo(t *testing.T) {
 func TestEnsureWorkspace_tracking_success(t *testing.T) {
 	g := &fakeGit{}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := h.EnsureWorkspace(h.Ref("myapp", ""), EnsureOpts{Track: "feat-x"})
@@ -301,7 +301,7 @@ func TestEnsureWorkspace_tracking_success(t *testing.T) {
 func TestEnsureWorkspace_tracking_overrideName(t *testing.T) {
 	g := &fakeGit{RemotesFn: func(_ string) ([]string, error) { return []string{"origin", "upstream"}, nil }}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := h.EnsureWorkspace(h.Ref("myapp", "review"), EnsureOpts{Track: "upstream/feat-x"})
@@ -319,7 +319,7 @@ func TestEnsureWorkspace_tracking_overrideName(t *testing.T) {
 func TestEnsureWorkspace_tracking_localBranchExists(t *testing.T) {
 	g := &fakeGit{HasLocalBranchFn: func(_, _ string) (bool, error) { return true, nil }}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", ""), EnsureOpts{Track: "feat-x"})
@@ -334,7 +334,7 @@ func TestEnsureWorkspace_tracking_localBranchExists(t *testing.T) {
 func TestEnsureWorkspace_tracking_fetchFails(t *testing.T) {
 	g := &fakeGit{FetchFn: func(_, _, _ string) error { return fmt.Errorf("no such ref") }}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", ""), EnsureOpts{Track: "feat-x"})
@@ -361,7 +361,7 @@ func TestEnsureWorkspace_TriggersHooks(t *testing.T) {
 	hook := &mockHook{}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
 	withHook(h, hook)
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{}); err != nil {
@@ -381,7 +381,7 @@ func TestEnsureWorkspace_TriggersHooks(t *testing.T) {
 func TestEnsureWorkspace_preHookFailure(t *testing.T) {
 	h, tmpDir := workspaceHerd(t, &fakeGit{}, &fakeTmux{})
 	withHook(h, &mockHook{failOn: semconv.HookPreWorktree})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{})
@@ -393,7 +393,7 @@ func TestEnsureWorkspace_preHookFailure(t *testing.T) {
 func TestEnsureWorkspace_postHookFailure(t *testing.T) {
 	h, tmpDir := workspaceHerd(t, &fakeGit{}, &fakeTmux{})
 	withHook(h, &mockHook{failOn: semconv.HookPostWorktree})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{})
@@ -405,7 +405,7 @@ func TestEnsureWorkspace_postHookFailure(t *testing.T) {
 func TestEnsureWorkspace_fromBranch_preHookFailure(t *testing.T) {
 	h, tmpDir := workspaceHerd(t, &fakeGit{}, &fakeTmux{})
 	withHook(h, &mockHook{failOn: semconv.HookPreWorktree})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{StartPoint: "main"})
@@ -417,7 +417,7 @@ func TestEnsureWorkspace_fromBranch_preHookFailure(t *testing.T) {
 func TestEnsureWorkspace_fromBranch_postHookFailure(t *testing.T) {
 	h, tmpDir := workspaceHerd(t, &fakeGit{}, &fakeTmux{})
 	withHook(h, &mockHook{failOn: semconv.HookPostWorktree})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{StartPoint: "main"})
@@ -437,7 +437,7 @@ func TestList_allProjects(t *testing.T) {
 		}, nil
 	}}
 	h, _ := workspaceHerdIn(t, tmpDir, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	spaces, err := h.List("")
@@ -462,7 +462,7 @@ func TestList_withRunningSession(t *testing.T) {
 			Type: "agent", Status: "running", Branch: "feature", Project: "myapp"},
 	}}
 	h, _ := workspaceHerdIn(t, tmpDir, g, f)
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	spaces, err := h.List("")
@@ -487,7 +487,7 @@ func TestList_cloneDirDetachedUsesDefaultBranch(t *testing.T) {
 			Type: "agent", Status: "running", Branch: "main", Project: "myapp"},
 	}}
 	h, _ := workspaceHerdIn(t, tmpDir, g, f)
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	spaces, err := h.List("")
@@ -533,7 +533,7 @@ func TestList_singleProject_notConfigured(t *testing.T) {
 func TestList_gitListError(t *testing.T) {
 	g := &fakeGit{ListFn: func(string) ([]git.WorktreeInfo, error) { return nil, fmt.Errorf("git error") }}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	spaces, err := h.List("")
@@ -576,7 +576,7 @@ func TestTeardown_notFound(t *testing.T) {
 func TestTeardown_success(t *testing.T) {
 	g := &fakeGit{}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Teardown(h.Ref("myapp", "feature"), TeardownOpts{}); err != nil {
@@ -603,7 +603,7 @@ func TestTeardown_listSessionsError(t *testing.T) {
 		return "", "", 0, nil
 	}}
 	h, tmpDir := workspaceHerd(t, &fakeGit{}, f)
-	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o700); err != nil {
 		t.Fatal(err)
 	}
 	err := h.Teardown(h.Ref("myapp", "feature"), TeardownOpts{})
@@ -615,7 +615,7 @@ func TestTeardown_listSessionsError(t *testing.T) {
 func TestTeardown_gitRemoveError(t *testing.T) {
 	g := &fakeGit{RemoveFn: func(_, _ string) error { return fmt.Errorf("git worktree remove failed") }}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o700); err != nil {
 		t.Fatal(err)
 	}
 	err := h.Teardown(h.Ref("myapp", "feature"), TeardownOpts{})
@@ -640,7 +640,7 @@ func TestTeardown_forceKillSessionError(t *testing.T) {
 		},
 	}
 	h, tmpDir := workspaceHerd(t, &fakeGit{}, f)
-	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o700); err != nil {
 		t.Fatal(err)
 	}
 	err := h.Teardown(h.Ref("myapp", "feature"), TeardownOpts{Force: true})
@@ -656,7 +656,7 @@ func TestTeardown_Force_KillsBothSessionTypes(t *testing.T) {
 	}}
 	g := &fakeGit{}
 	h, tmpDir := workspaceHerd(t, g, f)
-	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Teardown(h.Ref("myapp", "feature"), TeardownOpts{Force: true}); err != nil {
@@ -676,7 +676,7 @@ func TestRemoteBranches_fetchesThenLists(t *testing.T) {
 		return []git.RemoteBranch{{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"}}, nil
 	}}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	got, err := h.RemoteBranches("myapp", true)
@@ -696,7 +696,7 @@ func TestRemoteBranches_noFetch(t *testing.T) {
 		return []git.RemoteBranch{{Remote: "origin", Branch: "feat-x", Ref: "origin/feat-x"}}, nil
 	}}
 	h, tmpDir := workspaceHerd(t, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	got, err := h.RemoteBranches("myapp", false)
@@ -744,7 +744,7 @@ func TestTeardown_underProfile_killsSessionsThenDeletesWorktree(t *testing.T) {
 	h := New(cfg, &config.ProfileRegistry{Active: "work"}, Deps{Tmux: f, Git: g})
 
 	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat")
-	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+	if err := os.MkdirAll(wtPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -771,7 +771,7 @@ func TestTeardown_runningSessionWithoutForce(t *testing.T) {
 			Type: "agent", Branch: "feat", Project: "myapp"},
 	}}
 	h, dir := workspaceHerd(t, g, f)
-	if err := os.MkdirAll(filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -806,7 +806,7 @@ func TestTeardown_nonForce_preUpgradeSessionRunning_refuses(t *testing.T) {
 	h := New(cfg, &config.ProfileRegistry{Active: "work"}, Deps{Tmux: f, Git: &fakeGit{}})
 
 	// Teardown stats the worktree path before the running-check, so create it.
-	if err := os.MkdirAll(filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -822,7 +822,7 @@ func TestList_underProfile_findsRunningSession(t *testing.T) {
 	dir := t.TempDir()
 	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
 	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -867,7 +867,7 @@ func TestList_mainWorktree_divergedHead_displayBranchIsIdentity(t *testing.T) {
 		return []git.WorktreeInfo{{Path: cloneDirPath(tmpDir), Branch: "docs/rbac-epic"}}, nil
 	}}
 	h, _ := workspaceHerdIn(t, tmpDir, g, &fakeTmux{})
-	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o755); err != nil {
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -901,7 +901,7 @@ func TestList_divergedHead_refKeepsIdentityBranch(t *testing.T) {
 	dir := t.TempDir()
 	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
 	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -940,7 +940,7 @@ func TestList_nonMainWorktree_dirNameMismatch_noSession_showsLiveBranch(t *testi
 	dir := t.TempDir()
 	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
 	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "chore-cron-rework")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -977,7 +977,7 @@ func TestList_nonMainWorktree_sessionDivergence_showsRecordedBranch(t *testing.T
 	dir := t.TempDir()
 	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
 	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1018,7 +1018,7 @@ func TestList_nonMainWorktree_sessionAgrees_showsLiveBranch(t *testing.T) {
 	dir := t.TempDir()
 	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
 	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat-x")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1058,7 +1058,7 @@ func TestList_nonMainWorktree_detachedWithSession_recoversRecordedBranch(t *test
 	dir := t.TempDir()
 	cloneDir := filepath.Join(dir, "github.com", "user", "myapp")
 	wtPath := filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1137,4 +1137,72 @@ func workspaceHerdIn(t *testing.T, tmpDir string, g *fakeGit, f *fakeTmux) (*Her
 // contains reports whether s contains substr.
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
+}
+
+func TestEnsureWorkspace_autoCloneFails(t *testing.T) {
+	cloneErr := errors.New("network down")
+	g := &fakeGit{CloneFn: func(_, _, _ string) error { return cloneErr }}
+	h, _ := workspaceHerd(t, g, &fakeTmux{})
+
+	_, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{AutoClone: true})
+	if !errors.Is(err, cloneErr) {
+		t.Errorf("expected the clone error, got %v", err)
+	}
+}
+
+func TestEnsureWorkspace_worktreesRootBlocked(t *testing.T) {
+	h, tmpDir := workspaceHerd(t, &fakeGit{}, &fakeTmux{})
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A file where the worktrees root should be stops it being created.
+	if err := os.WriteFile(cloneDirPath(tmpDir)+"__worktrees", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{})
+	if err == nil || !strings.Contains(err.Error(), "creating worktrees dir") {
+		t.Errorf("expected a worktrees dir error, got %v", err)
+	}
+}
+
+func TestEnsureWorkspace_provisionFails(t *testing.T) {
+	// The fake git creates no worktree directory, so provisioning it fails.
+	h, tmpDir := workspaceHerd(t, &fakeGit{}, &fakeTmux{})
+	if err := os.MkdirAll(cloneDirPath(tmpDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := h.EnsureWorkspace(h.Ref("myapp", "feature"), EnsureOpts{Provision: true})
+	if err == nil || !strings.Contains(err.Error(), "processing templates") {
+		t.Errorf("expected the provisioning error, got %v", err)
+	}
+}
+
+// listSessionsFails is a tmux fake whose list-sessions errors out.
+func listSessionsFails() *fakeTmux {
+	return &fakeTmux{RunFn: func(args ...string) (string, string, int, error) {
+		if args[0] == "list-sessions" {
+			return "", "server exploded", 2, nil
+		}
+		return "", "", 0, nil
+	}}
+}
+
+func TestList_sessionsError(t *testing.T) {
+	h, _ := workspaceHerd(t, &fakeGit{}, listSessionsFails())
+	if _, err := h.List(""); err == nil || !strings.Contains(err.Error(), "server exploded") {
+		t.Errorf("List() = %v, want the tmux failure", err)
+	}
+}
+
+func TestTeardown_sessionsError(t *testing.T) {
+	h, tmpDir := workspaceHerd(t, &fakeGit{}, listSessionsFails())
+	if err := os.MkdirAll(cloneDirPath(tmpDir)+"__worktrees/feature", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := h.Teardown(h.Ref("myapp", "feature"), TeardownOpts{})
+	if err == nil || !strings.Contains(err.Error(), "server exploded") {
+		t.Errorf("Teardown() = %v, want the tmux failure", err)
+	}
 }

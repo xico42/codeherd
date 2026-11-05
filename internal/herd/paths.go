@@ -59,18 +59,31 @@ func (h *Herd) worktreePath(ref Ref) (string, error) {
 		return "", err
 	}
 	cloneDir := semconv.CloneDir(h.cfg.Defaults.ProjectsDir, rp)
-	if h.git != nil {
-		if infos, err := h.git.List(cloneDir); err == nil {
-			defaultBranch := h.cfg.Projects[ref.Project].DefaultBranch
-			for _, wt := range infos {
-				identity := semconv.WorktreeIdentityBranch(wt.Path, cloneDir, defaultBranch, wt.Branch)
-				if semconv.FlattenBranch(identity) == semconv.FlattenBranch(ref.Branch) {
-					return wt.Path, nil
-				}
-			}
-		}
+	if path, ok := h.liveWorktreePath(ref, cloneDir); ok {
+		return path, nil
 	}
 	return semconv.WorktreePath(h.cfg.Defaults.ProjectsDir, rp, ref.Branch), nil
+}
+
+// liveWorktreePath finds ref's worktree among those git reports for cloneDir,
+// matching on identity branch. It reports false when none matches or git is
+// unavailable.
+func (h *Herd) liveWorktreePath(ref Ref, cloneDir string) (string, bool) {
+	if h.git == nil {
+		return "", false
+	}
+	infos, err := h.git.List(cloneDir)
+	if err != nil {
+		return "", false
+	}
+	defaultBranch := h.cfg.Projects[ref.Project].DefaultBranch
+	for _, wt := range infos {
+		identity := semconv.WorktreeIdentityBranch(wt.Path, cloneDir, defaultBranch, wt.Branch)
+		if semconv.FlattenBranch(identity) == semconv.FlattenBranch(ref.Branch) {
+			return wt.Path, true
+		}
+	}
+	return "", false
 }
 
 // projectNames returns sorted project names, or just the named one after

@@ -23,7 +23,7 @@ args = ["hello"]
 [projects.myapp]
 repo = "git@github.com:user/myapp.git"
 `
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return cfgPath
@@ -102,7 +102,7 @@ projects_dir = "` + projectsDir + `"
 [projects.myapp]
 repo = "git@github.com:user/myapp.git"
 `
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Create the clone dir so EnsureWorkspace gets past the not-cloned check
@@ -111,7 +111,7 @@ repo = "git@github.com:user/myapp.git"
 	// non-sentinel error that flows through worktreeErr's default branch and is
 	// returned (no os.Exit) — the returnable path this test can observe.
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	err := runCmd(t, "--config", cfgPath, "create", "session", "myapp", "main")

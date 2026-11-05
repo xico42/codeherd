@@ -58,72 +58,81 @@ func buildItems(hrd *herd.Herd, spaces []herd.Workspace) []list.Item {
 	var items []Item
 	for _, ws := range spaces {
 		projectHasWorktree[ws.Ref.Project] = true
-
-		item := Item{
-			Ref:      ws.Ref,
-			Project:  ws.Ref.Project,
-			Branch:   ws.DisplayBranch,
-			Path:     ws.Path,
-			IsMain:   ws.IsMain,
-			HeadHint: ws.HeadHint,
-			HasShell: ws.Shell != nil,
-		}
-		if ws.Shell != nil {
-			item.ShellSessionID = ws.Shell.ID
-		}
-		if ws.Agent != nil {
-			item.Group = groupAgent
-			item.HasAgent = true
-			item.AgentStatus = string(ws.Agent.Status)
-			item.AgentSessionID = ws.Agent.ID
-			item.Annotation = ws.Agent.Annotation
-		} else {
-			item.Group = groupWorktree
-		}
-
-		items = append(items, item)
+		items = append(items, workspaceItem(ws))
 	}
+	items = append(items, projectItems(hrd, projectHasWorktree)...)
 
-	// Project rows: every configured project without a worktree. herd.List
-	// skips uncloned projects, so ask the herd directly for the full set.
-	if hrd != nil {
-		for _, p := range hrd.Projects() {
-			if projectHasWorktree[p.Name] {
-				continue
-			}
-			cloned := false
-			if got, err := hrd.Project(p.Name); err == nil {
-				cloned = got.Cloned
-			}
-			items = append(items, Item{
-				Project: p.Name,
-				Group:   groupProject,
-				Cloned:  cloned,
-			})
-		}
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Group != items[j].Group {
-			return items[i].Group < items[j].Group
-		}
-		// Within agent group, waiting sorts before running
-		if items[i].Group == groupAgent {
-			iWaiting := items[i].AgentStatus == semconv.StatusWaiting
-			jWaiting := items[j].AgentStatus == semconv.StatusWaiting
-			if iWaiting != jWaiting {
-				return iWaiting
-			}
-		}
-		if items[i].Project != items[j].Project {
-			return items[i].Project < items[j].Project
-		}
-		return items[i].Branch < items[j].Branch
-	})
+	sort.Slice(items, func(i, j int) bool { return itemLess(items[i], items[j]) })
 
 	result := make([]list.Item, len(items))
 	for i, item := range items {
 		result[i] = item
 	}
 	return result
+}
+
+// workspaceItem is the row for one worktree: in the agent group when it has
+// an agent session, the worktree group otherwise.
+func workspaceItem(ws herd.Workspace) Item {
+	item := Item{
+		Ref:      ws.Ref,
+		Project:  ws.Ref.Project,
+		Branch:   ws.DisplayBranch,
+		Path:     ws.Path,
+		IsMain:   ws.IsMain,
+		HeadHint: ws.HeadHint,
+		HasShell: ws.Shell != nil,
+		Group:    groupWorktree,
+	}
+	if ws.Shell != nil {
+		item.ShellSessionID = ws.Shell.ID
+	}
+	if ws.Agent != nil {
+		item.Group = groupAgent
+		item.HasAgent = true
+		item.AgentStatus = string(ws.Agent.Status)
+		item.AgentSessionID = ws.Agent.ID
+		item.Annotation = ws.Agent.Annotation
+	}
+	return item
+}
+
+// projectItems returns a row for every configured project without a
+// worktree. herd.List skips uncloned projects, so this asks the herd directly
+// for the full set.
+func projectItems(hrd *herd.Herd, hasWorktree map[string]bool) []Item {
+	if hrd == nil {
+		return nil
+	}
+	var items []Item
+	for _, p := range hrd.Projects() {
+		if hasWorktree[p.Name] {
+			continue
+		}
+		cloned := false
+		if got, err := hrd.Project(p.Name); err == nil {
+			cloned = got.Cloned
+		}
+		items = append(items, Item{Project: p.Name, Group: groupProject, Cloned: cloned})
+	}
+	return items
+}
+
+// itemLess orders rows by group, then — within the agent group — waiting
+// before running, then by project and branch.
+func itemLess(a, b Item) bool {
+	if a.Group != b.Group {
+		return a.Group < b.Group
+	}
+	if a.Group == groupAgent {
+		aWaiting := a.AgentStatus == semconv.StatusWaiting
+		bWaiting := b.AgentStatus == semconv.StatusWaiting
+		if aWaiting != bWaiting {
+			return aWaiting
+		}
+	}
+	if a.Project != b.Project {
+		return a.Project < b.Project
+	}
+	return a.Branch < b.Branch
 }

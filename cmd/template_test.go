@@ -67,7 +67,7 @@ func TestTemplate_processesHerdFiles(t *testing.T) {
 
 	// Create a .herd template file
 	tmplContent := "PROJECT={{ .Project }}\nBRANCH={{ .Branch }}\n"
-	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte(tmplContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte(tmplContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,7 +92,7 @@ func TestTemplate_dryRun_doesNotWrite(t *testing.T) {
 	dir := t.TempDir()
 
 	tmplContent := "PROJECT={{ .Project }}\n"
-	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte(tmplContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte(tmplContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -114,12 +114,12 @@ func TestTemplate_resolveProjectFromCloneDir(t *testing.T) {
 	projectsDir := t.TempDir()
 	// Simulate the clone directory path: <projectsDir>/github.com/user/myapp
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
 	tmplContent := "PROJECT={{ .Project }}\n"
-	if err := os.WriteFile(filepath.Join(cloneDir, ".env.herd"), []byte(tmplContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cloneDir, ".env.herd"), []byte(tmplContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,12 +136,12 @@ func TestTemplate_resolveProjectFromDir(t *testing.T) {
 	projectsDir := t.TempDir()
 	// Simulate a worktree directory inside the project's worktrees root
 	wtDir := filepath.Join(projectsDir, "github.com", "user", "myapp__worktrees", "feat")
-	if err := os.MkdirAll(wtDir, 0o755); err != nil {
+	if err := os.MkdirAll(wtDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
 	tmplContent := "PROJECT={{ .Project }}\n"
-	if err := os.WriteFile(filepath.Join(wtDir, ".env.herd"), []byte(tmplContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wtDir, ".env.herd"), []byte(tmplContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -172,5 +172,31 @@ func TestTemplate_invalidTemplate_returnsError(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, ".env")); !os.IsNotExist(statErr) {
 		t.Errorf("no output file should be written for an invalid template, stat err = %v", statErr)
+	}
+}
+
+// TestTemplate_branchNotDetectable verifies that a directory outside any git
+// repo, with no --branch, fails with a pointer to the flag.
+func TestTemplate_branchNotDetectable(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	err := runCmd(t, "--config", cfgPath, "template", "--project", "myapp", dir)
+	if err == nil || !strings.Contains(err.Error(), "use --branch flag") {
+		t.Fatalf("expected a branch detection error, got %v", err)
+	}
+}
+
+// TestTemplate_unresolvableDir verifies that a relative dir that cannot be made
+// absolute (the working directory was removed) is reported.
+func TestTemplate_unresolvableDir(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	gone := t.TempDir()
+	t.Chdir(gone)
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	err := runCmd(t, "--config", cfgPath, "template", "--project", "myapp", "--branch", "main", "rel")
+	if err == nil || !strings.Contains(err.Error(), "resolving path") {
+		t.Fatalf("expected a path resolution error, got %v", err)
 	}
 }

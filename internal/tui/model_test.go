@@ -840,3 +840,47 @@ func TestStartRemotePicker_setsBusy(t *testing.T) {
 		t.Error("startRemotePicker should return a batched cmd")
 	}
 }
+
+func TestModel_updateList_quitKey(t *testing.T) {
+	m := Model{screen: screenList}
+	m.list = newList(nil)
+	m.keys = defaultKeyMap()
+
+	_, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
+	if cmd == nil {
+		t.Fatal("q returned no cmd, want tea.Quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("q did not quit")
+	}
+}
+
+func TestModel_updateList_profileKeys(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"personal", "work", "side"} {
+		if err := os.WriteFile(filepath.Join(dir, name+".toml"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg := &config.ProfileRegistry{Active: "personal", Names: []string{"personal", "work", "side"}, ProfilesDir: dir}
+	m := NewModel(herd.New(&config.Config{}, reg, herd.Deps{}), nil, false)
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'p', Mod: tea.ModCtrl}))
+	if got := updated.(Model).ActiveProfileForTest(); got != "work" {
+		t.Errorf("after ctrl+p, active = %q, want work", got)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl}))
+	if got := updated.(Model).ActiveProfileForTest(); got != "side" {
+		t.Errorf("after ctrl+n, active = %q, want side", got)
+	}
+}
+
+func TestModel_Update_routesToAgentPicker(t *testing.T) {
+	m := Model{screen: screenAgentPicker}
+	m.list = newList(nil)
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	if um := updated.(Model); um.screen != screenList {
+		t.Errorf("screen = %d, want esc in the agent picker to return to the list", um.screen)
+	}
+}

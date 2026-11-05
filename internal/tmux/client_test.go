@@ -415,13 +415,7 @@ func TestClient_NewSessionWithEnv_ok(t *testing.T) {
 	// Verify -d, -s, -c flags are present
 	argStr := fmt.Sprintf("%v", r.lastArgs)
 	for _, want := range []string{"-d", "-s", "myapp-feature", "-c", "/tmp/wt"} {
-		found := false
-		for _, a := range r.lastArgs {
-			if a == want {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(r.lastArgs, want)
 		if !found {
 			t.Errorf("expected %q in args %s", want, argStr)
 		}

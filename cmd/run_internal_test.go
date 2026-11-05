@@ -103,11 +103,8 @@ func TestRunAgentCmd_runKnownAgent_callsExec(t *testing.T) {
 
 	// Verify env merging: AGENT_VAR should be present
 	var foundAgentVar bool
-	for _, e := range execEnv {
-		if e == "AGENT_VAR=agent_value" {
-			foundAgentVar = true
-			break
-		}
+	if slices.Contains(execEnv, "AGENT_VAR=agent_value") {
+		foundAgentVar = true
 	}
 	if !foundAgentVar {
 		t.Errorf("env does not contain AGENT_VAR=agent_value: %v", execEnv)

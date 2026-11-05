@@ -34,7 +34,7 @@ func sessionHerd(t *testing.T, f *fakeTmux) (*Herd, string) {
 func mkMyappWorktree(t *testing.T, dir, branch string) {
 	t.Helper()
 	p := filepath.Join(dir, "github.com", "user", "myapp__worktrees", semconv.FlattenBranch(branch))
-	if err := os.MkdirAll(p, 0o755); err != nil {
+	if err := os.MkdirAll(p, 0o700); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -52,11 +52,11 @@ func newSessionEnv(calls [][]string) map[string]string {
 				continue
 			}
 			kv := c[i+1]
-			eq := strings.Index(kv, "=")
-			if eq < 0 {
+			before, after, ok := strings.Cut(kv, "=")
+			if !ok {
 				continue
 			}
-			env[kv[:eq]] = kv[eq+1:]
+			env[before] = after
 		}
 		return env
 	}
@@ -100,7 +100,7 @@ func TestLaunch_StampsBranchOption(t *testing.T) {
 func TestLaunch_stampsProjectOption(t *testing.T) {
 	f := &fakeTmux{}
 	h, dir := sessionHerd(t, f)
-	if err := os.MkdirAll(filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "github.com", "user", "myapp__worktrees", "feat"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -892,5 +892,27 @@ func TestSessionExistsError(t *testing.T) {
 	}
 	if !errors.Is(err, ErrSessionExists) {
 		t.Error("errors.Is(err, ErrSessionExists) = false, want true")
+	}
+}
+
+func TestLaunch_unknownProject(t *testing.T) {
+	h, _ := sessionHerd(t, &fakeTmux{})
+	if _, err := h.Launch(h.Ref("nope", "feat"), LaunchOpts{}); err == nil {
+		t.Error("Launch() = nil error, want one for an unconfigured project")
+	}
+}
+
+func TestLaunch_hookFailures(t *testing.T) {
+	for _, hook := range []string{semconv.HookPreSession, semconv.HookPostSession} {
+		t.Run(hook, func(t *testing.T) {
+			h, dir := sessionHerd(t, &fakeTmux{})
+			mkMyappWorktree(t, dir, "feat")
+			withHook(h, &mockHook{failOn: hook})
+
+			_, err := h.Launch(h.Ref("myapp", "feat"), LaunchOpts{})
+			if err == nil || !strings.Contains(err.Error(), hook+" hook") {
+				t.Errorf("Launch() = %v, want the %s hook failure", err, hook)
+			}
+		})
 	}
 }

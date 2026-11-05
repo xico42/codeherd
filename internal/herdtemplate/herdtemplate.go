@@ -1,3 +1,5 @@
+// Package herdtemplate renders *.herd template files into their unsuffixed
+// counterparts, with deterministic port allocation and environment lookups.
 package herdtemplate
 
 import (
@@ -29,7 +31,7 @@ const (
 func DeterministicPortWithSeed(project, branch, name, seed string) int {
 	key := project + "\x00" + branch + "\x00" + name + "\x00" + seed
 	h := fnv.New32a()
-	h.Write([]byte(key))
+	_, _ = h.Write([]byte(key)) // hash.Hash.Write never returns an error
 	return int(h.Sum32()%portRange) + portMin
 }
 

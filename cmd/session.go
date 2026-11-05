@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -216,14 +215,10 @@ func (c *DeleteSessionCmd) Run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return herdErr(project, branch, err)
 		}
-		if info.Status == herd.StatusRunning {
-			out.Printf("Delete session %s/%s (%s)? [y/N] ", project, branch, sessionType)
-			scanner := bufio.NewScanner(cmd.InOrStdin())
-			scanner.Scan()
-			if scanner.Text() != "y" && scanner.Text() != "Y" {
-				out.Println("Aborted.")
-				return out.Err()
-			}
+		prompt := fmt.Sprintf("Delete session %s/%s (%s)?", project, branch, sessionType)
+		if info.Status == herd.StatusRunning && !confirm(cmd, out, prompt) {
+			out.Println("Aborted.")
+			return out.Err()
 		}
 	}
 

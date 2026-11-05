@@ -14,7 +14,7 @@ func writeConfig(t *testing.T, projectsDir string) string {
 	cfgDir := t.TempDir()
 	cfgPath := filepath.Join(cfgDir, "config.toml")
 	content := "[defaults]\nprojects_dir = \"" + projectsDir + "\"\n\n[projects.myapp]\nrepo = \"git@github.com:user/myapp.git\"\n"
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return cfgPath
@@ -96,7 +96,7 @@ func TestWorktreeDelete_tooFewArgs(t *testing.T) {
 func TestWorktreeList_withClonedProject(t *testing.T) {
 	projectsDir := t.TempDir()
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := writeConfig(t, projectsDir)
@@ -134,7 +134,7 @@ func TestWorktreeCreate_fromFlag_parsed(t *testing.T) {
 	projectsDir := t.TempDir()
 	// Create the clone dir so we get past "not cloned" check
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := writeConfig(t, projectsDir)
@@ -150,7 +150,7 @@ func TestWorktreeCreate_attachFlag_parsed(t *testing.T) {
 	projectsDir := t.TempDir()
 	// Create the clone dir so we get past "not cloned" check
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := writeConfig(t, projectsDir)
@@ -166,7 +166,7 @@ func TestWorktreeCreate_agentFlag_parsed(t *testing.T) {
 	projectsDir := t.TempDir()
 	// Create the clone dir so we get past "not cloned" check
 	cloneDir := filepath.Join(projectsDir, "github.com", "user", "myapp")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+	if err := os.MkdirAll(cloneDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := writeConfig(t, projectsDir)

@@ -296,3 +296,17 @@ repo = "git@x:i"
 		t.Errorf("warning missing stray key mention: %q", out)
 	}
 }
+
+// TestLoadProfile_nameCannotEscapeProfilesDir guards the profile name, which
+// comes from --profile or CODEHERD_PROFILE: it must not reach files outside
+// the profiles directory.
+func TestLoadProfile_nameCannotEscapeProfilesDir(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	writeProfile(t, profilesDir, "personal", "")
+	writeProfile(t, dir, "outside", "[defaults]\nprojects_dir = \"/tmp\"\n")
+
+	if _, err := config.LoadProfile(profilesDir, "../outside"); err == nil {
+		t.Fatal("LoadProfile(\"../outside\") = nil error, want the escape rejected")
+	}
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/xico42/codeherd/internal/hooks"
 	"github.com/xico42/codeherd/internal/semconv"
+	"github.com/xico42/codeherd/internal/testutil"
 )
 
 func TestProcess_RendersHerdFiles(t *testing.T) {
@@ -28,10 +29,7 @@ func TestProcess_RendersHerdFiles(t *testing.T) {
 		t.Fatalf("Process() error = %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, ".env"))
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
+	data := testutil.ReadFile(t, dir, ".env")
 	if len(data) == 0 {
 		t.Error("output file is empty")
 	}
@@ -95,10 +93,7 @@ func TestProcess_TemplateContext(t *testing.T) {
 		t.Fatalf("Process() error = %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "info.txt"))
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
+	data := testutil.ReadFile(t, dir, "info.txt")
 	got := string(data)
 	if got != "project=myapp\nbranch=feature\npath="+dir+"\nsession=myapp-feature\n" {
 		t.Errorf("content = %q", got)
@@ -122,10 +117,7 @@ func TestProcess_PortFunction(t *testing.T) {
 		t.Fatalf("Process() error = %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "ports"))
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
+	data := testutil.ReadFile(t, dir, "ports")
 	got := string(data)
 	if len(got) < 5 {
 		t.Errorf("port output too short: %q", got)
@@ -508,14 +500,8 @@ func TestProcess_PortFunction_StableAcrossFiles(t *testing.T) {
 		t.Fatalf("Process() error = %v", err)
 	}
 
-	a, err := os.ReadFile(filepath.Join(dir, "a.env"))
-	if err != nil {
-		t.Fatalf("reading a: %v", err)
-	}
-	b, err := os.ReadFile(filepath.Join(dir, "b.env"))
-	if err != nil {
-		t.Fatalf("reading b: %v", err)
-	}
+	a := testutil.ReadFile(t, dir, "a.env")
+	b := testutil.ReadFile(t, dir, "b.env")
 	if string(a) != string(b) {
 		t.Errorf("port differs across files: a=%q b=%q", string(a), string(b))
 	}
@@ -544,10 +530,7 @@ func TestProcess_PortCollision_ResolvedByAltHash(t *testing.T) {
 		t.Fatalf("Process() error = %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "ports.env"))
-	if err != nil {
-		t.Fatalf("reading output: %v", err)
-	}
+	data := testutil.ReadFile(t, dir, "ports.env")
 	want := "svc295=58792\nsvc758=35555\n"
 	if string(data) != want {
 		t.Errorf("output = %q, want %q", string(data), want)
@@ -641,5 +624,110 @@ func TestPortAllocator_Exhausted_Errors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `"anything"`) {
 		t.Errorf("error %q should mention the requested name", err.Error())
+	}
+}
+
+func processDir(t *testing.T, dir string) error {
+	t.Helper()
+	_, err := New(&hooks.NoOp{}).Process(ProcessContext{
+		Project:      "myapp",
+		Branch:       "feature",
+		WorktreePath: dir,
+		SessionName:  "myapp-feature",
+	}, nil)
+	return err
+}
+
+func TestProcess_unreadableTemplate(t *testing.T) {
+	dir := t.TempDir()
+	// A dangling symlink is found by the walk but cannot be read.
+	if err := os.Symlink(filepath.Join(dir, "missing"), filepath.Join(dir, ".env.herd")); err != nil {
+		t.Fatal(err)
+	}
+	if err := processDir(t, dir); err == nil {
+		t.Error("Process() = nil, want an error for an unreadable template")
+	}
+}
+
+func TestProcess_unwritableOutput(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env.herd"), []byte("A=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, ".env"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := processDir(t, dir); err == nil {
+		t.Error("Process() = nil, want an error when the output path is a directory")
+	}
+}
+
+// TestProcess_outputSymlinkCannotEscapeWorktree guards against a repo that
+// ships x.herd next to a symlink x pointing outside the worktree: rendering
+// must not write through the symlink.
+func TestProcess_outputSymlinkCannotEscapeWorktree(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(outside, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "victim.herd"), []byte("overwritten"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "victim")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := processDir(t, dir); err == nil {
+		t.Error("Process() = nil, want the escaping write rejected")
+	}
+	if got := string(testutil.ReadFile(t, filepath.Dir(outside), "victim")); got != "original" {
+		t.Errorf("file outside the worktree = %q, want it untouched", got)
+	}
+}
+
+// TestProcess_templateSymlinkCannotEscapeWorktree guards against a repo whose
+// .herd file is a symlink to a file outside the worktree: its contents must
+// not be rendered into the worktree.
+func TestProcess_templateSymlinkCannotEscapeWorktree(t *testing.T) {
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("s3cr3t"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(secret, filepath.Join(dir, "leak.herd")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := processDir(t, dir); err == nil {
+		t.Error("Process() = nil, want the escaping read rejected")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "leak")); !os.IsNotExist(err) {
+		t.Errorf("leak was rendered into the worktree (stat err = %v)", err)
+	}
+}
+
+func TestProcess_missingWorktree(t *testing.T) {
+	if err := processDir(t, filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Error("Process() = nil, want an error for a missing worktree")
+	}
+}
+
+func TestProcess_unreadableSubdirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read a directory regardless of its mode")
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(locked, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := processDir(t, dir); err == nil {
+		t.Error("Process() = nil, want the walk error reported")
 	}
 }

@@ -2,8 +2,10 @@ package herdtemplate
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"hash/fnv"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,67 +122,97 @@ func New(hook hooks.Hook) *Service {
 // Process walks the worktree directory, finds all .herd files, renders them,
 // and writes the output without the .herd suffix. Triggers pre/post-template hooks.
 // When ctx.DryRun is true, files are rendered but not written and hooks are skipped.
-func (s *Service) Process(ctx ProcessContext, attrs map[string]string) (ProcessResult, error) {
-	herdFiles, err := findHerdFiles(ctx.WorktreePath)
+//
+// Every read and write goes through an os.Root on the worktree: templates come
+// from the cloned repo, and a symlink in it must not make rendering read or
+// write outside the worktree.
+func (s *Service) Process(ctx ProcessContext, attrs map[string]string) (result ProcessResult, err error) {
+	root, err := os.OpenRoot(ctx.WorktreePath)
 	if err != nil {
 		return ProcessResult{}, fmt.Errorf("scanning for .herd files: %w", err)
 	}
+	defer func() { err = errors.Join(err, root.Close()) }()
 
+	herdFiles, err := findHerdFiles(root.FS())
+	if err != nil {
+		return ProcessResult{}, fmt.Errorf("scanning for .herd files: %w", err)
+	}
 	if len(herdFiles) == 0 {
 		return ProcessResult{}, nil
 	}
 
-	if !ctx.DryRun {
-		if err := s.hook.Trigger(semconv.HookPreTemplate, attrs, ctx.WorktreePath); err != nil {
-			return ProcessResult{}, fmt.Errorf("pre-template hook: %w", err)
-		}
+	if err := s.trigger(semconv.HookPreTemplate, ctx, attrs); err != nil {
+		return ProcessResult{}, err
 	}
-
-	alloc := newPortAllocator(ctx.Project, ctx.Branch)
-	funcMap := template.FuncMap{
-		"port": func(name string) (int, error) {
-			return alloc.allocate(name)
-		},
-		"env": func(args ...string) string {
-			if len(args) == 0 {
-				return ""
-			}
-			if v := os.Getenv(args[0]); v != "" {
-				return v
-			}
-			if len(args) > 1 {
-				return args[1]
-			}
-			return ""
-		},
+	result, err = renderAll(root, herdFiles, ctx)
+	if err != nil {
+		return ProcessResult{}, err
 	}
-
-	var result ProcessResult
-	for _, path := range herdFiles {
-		rf, err := renderFile(path, ctx, funcMap)
-		if err != nil {
-			return ProcessResult{}, fmt.Errorf("rendering %s: %w", path, err)
-		}
-		result.Files = append(result.Files, rf)
+	if err := s.trigger(semconv.HookPostTemplate, ctx, attrs); err != nil {
+		return ProcessResult{}, err
 	}
-
-	if !ctx.DryRun {
-		if err := s.hook.Trigger(semconv.HookPostTemplate, attrs, ctx.WorktreePath); err != nil {
-			return ProcessResult{}, fmt.Errorf("post-template hook: %w", err)
-		}
-	}
-
 	return result, nil
 }
 
-func findHerdFiles(root string) ([]string, error) {
+// trigger runs a template hook. A dry run skips hooks: it must have no side
+// effects.
+func (s *Service) trigger(name string, ctx ProcessContext, attrs map[string]string) error {
+	if ctx.DryRun {
+		return nil
+	}
+	if err := s.hook.Trigger(name, attrs, ctx.WorktreePath); err != nil {
+		return fmt.Errorf("%s hook: %w", name, err)
+	}
+	return nil
+}
+
+// templateFuncs returns the functions available to .herd templates.
+func templateFuncs(alloc *portAllocator) template.FuncMap {
+	return template.FuncMap{
+		"port": alloc.allocate,
+		"env":  envOr,
+	}
+}
+
+// envOr implements the template func `env "VAR" "default"`: the variable's
+// value when set and non-empty, else the default, else "".
+func envOr(args ...string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	if v := os.Getenv(args[0]); v != "" {
+		return v
+	}
+	if len(args) > 1 {
+		return args[1]
+	}
+	return ""
+}
+
+// renderAll renders the named templates in order. They share one port
+// allocator, so ports stay unique across files.
+func renderAll(root *os.Root, names []string, ctx ProcessContext) (ProcessResult, error) {
+	funcs := templateFuncs(newPortAllocator(ctx.Project, ctx.Branch))
+	var result ProcessResult
+	for _, name := range names {
+		rf, err := renderFile(root, name, ctx, funcs)
+		if err != nil {
+			return ProcessResult{}, fmt.Errorf("rendering %s: %w", filepath.Join(ctx.WorktreePath, name), err)
+		}
+		result.Files = append(result.Files, rf)
+	}
+	return result, nil
+}
+
+// findHerdFiles returns the .herd files under fsys as OS paths relative to it.
+func findHerdFiles(fsys fs.FS) ([]string, error) {
 	var files []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && strings.HasSuffix(path, herdSuffix) {
-			files = append(files, path)
+		if !d.IsDir() && strings.HasSuffix(path, herdSuffix) {
+			files = append(files, filepath.FromSlash(path))
 		}
 		return nil
 	})
@@ -190,13 +222,15 @@ func findHerdFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-func renderFile(path string, ctx ProcessContext, funcMap template.FuncMap) (RenderedFile, error) {
-	data, err := os.ReadFile(path)
+// renderFile renders the template at name inside root and, unless this is a
+// dry run, writes the result next to it without the .herd suffix.
+func renderFile(root *os.Root, name string, ctx ProcessContext, funcs template.FuncMap) (RenderedFile, error) {
+	data, err := root.ReadFile(name)
 	if err != nil {
 		return RenderedFile{}, fmt.Errorf("reading template: %w", err)
 	}
 
-	tmpl, err := template.New(filepath.Base(path)).Funcs(funcMap).Parse(string(data))
+	tmpl, err := template.New(filepath.Base(name)).Funcs(funcs).Parse(string(data))
 	if err != nil {
 		return RenderedFile{}, fmt.Errorf("parsing template: %w", err)
 	}
@@ -206,17 +240,17 @@ func renderFile(path string, ctx ProcessContext, funcMap template.FuncMap) (Rend
 		return RenderedFile{}, fmt.Errorf("executing template: %w", err)
 	}
 
-	outPath := strings.TrimSuffix(path, herdSuffix)
+	outName := strings.TrimSuffix(name, herdSuffix)
 
 	if !ctx.DryRun {
-		if err := os.WriteFile(outPath, buf.Bytes(), 0o600); err != nil {
+		if err := root.WriteFile(outName, buf.Bytes(), 0o600); err != nil {
 			return RenderedFile{}, fmt.Errorf("writing output: %w", err)
 		}
 	}
 
 	return RenderedFile{
-		Source: path,
-		Target: outPath,
+		Source: filepath.Join(ctx.WorktreePath, name),
+		Target: filepath.Join(ctx.WorktreePath, outName),
 		Output: buf.String(),
 	}, nil
 }

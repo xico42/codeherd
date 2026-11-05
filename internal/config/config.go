@@ -73,7 +73,9 @@ func Load(path, profileName string) (*Config, *ProfileRegistry, error) {
 
 	cfg := &Config{path: path}
 
-	data, err := os.ReadFile(path)
+	// The path is exactly the one the user named (or the default); there is
+	// no directory to confine it to.
+	data, err := os.ReadFile(filepath.Clean(path))
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := cfg.expandPaths(); err != nil {
 			return nil, nil, err

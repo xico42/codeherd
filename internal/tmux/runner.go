@@ -49,8 +49,7 @@ func (r *RealRunner) Run(args ...string) (stdout, stderr string, exitCode int, e
 	stdout = outBuf.String()
 	stderr = errBuf.String()
 	if runErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			return stdout, stderr, exitErr.ExitCode(), nil
 		}
 		return stdout, stderr, -1, fmt.Errorf("running tmux %v: %w", args, runErr)

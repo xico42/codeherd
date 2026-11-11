@@ -176,8 +176,7 @@ func (r *RealRunner) HasLocalBranch(cloneDir, branch string) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
+	if _, ok := errors.AsType[*exec.ExitError](err); ok {
 		return false, nil
 	}
 	return false, fmt.Errorf("git show-ref %s: %w", ref, err)

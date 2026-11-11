@@ -1,0 +1,7 @@
+[tools]
+go = "1.27"              # latest minor as of 2026-11-11; matches go.mod
+golangci-lint = "2.15"   # latest minor as of 2026-11-11 (was the go.mod tool directive, v2.12.2)
+lefthook = "2"           # git hooks; hooks only check, never write
+
+[settings]
+lockfile = true

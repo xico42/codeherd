@@ -16,32 +16,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5
+      - uses: jdx/mise-action@v4
+      - run: mise use -g task@3
+      - uses: actions/cache@v4
         with:
-          go-version-file: go.mod
-      - run: make coverage
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+      - run: task coverage
 
   integration:
     name: Integration tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5
+      - uses: jdx/mise-action@v4
+      - run: mise use -g task@3
+      - uses: actions/cache@v4
         with:
-          go-version-file: go.mod
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-${{ runner.os }}-
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux
-      - run: make test-integration
+      - run: task test-integration
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5
+      - uses: jdx/mise-action@v4
+      - run: mise use -g task@3
+      - uses: actions/cache@v4
         with:
-          go-version-file: go.mod
-      - run: make lint
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+      - run: task lint
 
   release-build:
     name: Release build smoke (${{ matrix.goos }}/${{ matrix.goarch }})
@@ -53,12 +71,11 @@ jobs:
         goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - run: make release-build GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
-      - run: make release-archive GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
+      - uses: jdx/mise-action@v4
+      - run: mise use -g task@3
+      - run: task release-build GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
+      - run: task release-archive GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
       - name: Verify archive contents
         run: |
-          tar -tzf dist/ch-$(cat VERSION)-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz \
+          tar -tzf dist/ch-"$(cat VERSION)"-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz \
             | LC_ALL=C sort | diff - <(printf "LICENSE\nREADME.md\nch\n")

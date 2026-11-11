@@ -53,6 +53,16 @@ func TestHerdErr_sessionExists_carriesRefFromTypedError(t *testing.T) {
 	}
 }
 
+// A wrapped sentinel without the typed error carries no Ref, so herdErr
+// returns it unchanged rather than inventing a session name.
+func TestHerdErr_sessionExists_bareSentinelPassesThrough(t *testing.T) {
+	in := fmt.Errorf("launch: %w", herd.ErrSessionExists)
+	got := herdErr("myapp", "feat", in)
+	if got != in {
+		t.Fatalf("herdErr() = %v, want the input error %v", got, in)
+	}
+}
+
 func TestHerdErr_mainWorktree(t *testing.T) {
 	err := herdErr("myapp", "main", fmt.Errorf("%w: myapp/main", herd.ErrMainWorktree))
 	if err == nil {

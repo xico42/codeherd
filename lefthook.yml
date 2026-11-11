@@ -1,0 +1,18 @@
+# Hooks only check and report; they never modify files.
+# Fix what they report with the writing tasks (task format).
+output: [failure]
+
+pre-commit:
+  parallel: true    # hooks never write, so checks cannot race
+  jobs:
+    - name: format
+      glob: "*.go"
+      run: task format:check -- {staged_files}
+    - name: lint
+      glob: "*.go"
+      run: task lint
+
+pre-push:
+  jobs:
+    - name: test
+      run: task test

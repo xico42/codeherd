@@ -9,15 +9,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build and development commands
 
 ```bash
-make build           # build ./ch binary
-make install         # build + install to ~/.local/bin/ch
-make test            # go test ./...
-make test-integration # go test -tags integration ./...
-make lint            # golangci-lint run ./...
-make check           # coverage (80%+) → integration tests → lint → build
-make setup           # deps → verify (full first-time setup)
-make clean           # remove local binary
+task setup            # mise install, go mod download, lefthook install
+task build            # build ./ch binary
+task install          # build + install to ~/.local/bin/ch
+task test             # go test ./...
+task test-integration # go test -tags integration ./...
+task lint             # golangci-lint run ./...
+task format           # gofmt -s -w (paths after --, default .)
+task format:check     # list unformatted files, fail if any; never writes
+task check            # format check -> coverage (80%+) -> integration tests -> lint -> build
+task clean            # remove local binary, coverage and dist
 ```
+
+Tools (Go, golangci-lint, lefthook) are pinned in `mise.toml` and locked
+exactly in `mise.lock`; go-task is installed globally. Git hooks
+(`lefthook.yml`) only check and report, never modify files: fix what they
+report with `task format`.
 
 Run a single package's tests:
 ```bash
@@ -26,7 +33,7 @@ go test ./internal/herd/...
 # etc.
 ```
 
-Build with version embedded (done automatically via Makefile):
+Build with version embedded (done automatically by `task build`):
 ```bash
 go build -ldflags "-s -w -X main.version=$(git describe --tags --always)" -o ch .
 ```
@@ -35,7 +42,7 @@ go build -ldflags "-s -w -X main.version=$(git describe --tags --always)" -o ch 
 
 Before marking any task complete, run:
 ```bash
-make check
+task check
 ```
 This runs coverage (80% minimum), integration tests, lint, and build. New code must include tests sufficient to keep aggregate coverage at or above 80%.
 
@@ -93,7 +100,7 @@ All commands run locally — they execute git/tmux/filesystem directly on whatev
 - **Missing file = empty defaults**: `config.Load()` returns an empty `Config` (not an error) when the file doesn't exist
 - **`syscall.Exec` for interactive commands**: `attach session`, `create worktree --attach`, and related commands replace the process rather than spawning a child
 - **Local execution**: all session/project/worktree commands run git/tmux via `os/exec` on the local machine — no SSH indirection
-- **Integration tests**: tagged with `//go:build integration` and run separately via `make test-integration`
+- **Integration tests**: tagged with `//go:build integration` and run separately via `task test-integration`
 - **Pin the git default branch in test repos**: create test repos with `testutil.InitRepo(t, dir)`, which runs `git init -b main`. Any other helper that `git init`s a repo for worktree/session tests must also pass `-b main`. Plain `git init` takes the branch name from the host's `init.defaultBranch`, which is unset on CI runners and defaults to `master`. Code that references `main` as a start point (e.g. `worktree.New`'s fallback) then fails with `fatal: invalid reference: main` on CI while passing on a developer machine configured with `init.defaultBranch=main`.
 - **Tmux isolation in tests**: tests that touch a real tmux server must call `testutil.IsolateTmux(t)`. It sets `CODEHERD_TMUX_SOCKET` to a socket under `t.TempDir()` (the `internal/tmux` `RealRunner` reads this env var and prepends `-S <path>` to every tmux call), clears `$TMUX`, probes with a throwaway session (`t.Skip` if tmux cannot daemonize, so sandboxed CI does not flake), and kills the server on cleanup. Inspect the server with `testutil.Tmux(t, args...)`. Never call bare `exec.Command("tmux", …)` from a test — it will leak into the developer's outer tmux server and collide with parallel test runs.
 - **One exec site per binary**: git runs only through `git.Run` (tests use `testutil.Git`), tmux only through `tmux.RealRunner`. Every git call puts `--end-of-options` before arguments that come from outside (branches, start points, paths, remotes), so they can never be parsed as options. These sites, and `sh -c` in `internal/hooks`, carry the only `//nolint:gosec` annotations.

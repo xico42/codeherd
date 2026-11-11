@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package codeherd.v1alpha1;
+
+import "google/protobuf/any.proto";
+import "google/rpc/code.proto";
+
+// Error is an application failure, carried in an Outcome. Clients match on
+// reason and domain; code gives the broad category.
+message Error {
+  // The broad category, with gRPC code semantics: NOT_FOUND,
+  // FAILED_PRECONDITION, ... Generic clients branch on it.
+  google.rpc.Code code = 1;
+  // The stable contract, UPPER_SNAKE. A reason never changes meaning.
+  string reason = 2;
+  // "codeherd.dev" for core reasons, or the plugin's name, so plugin reasons
+  // cannot collide with core ones.
+  string domain = 3;
+  // For people; wording may change at any time. Never parsed.
+  string message = 4;
+  // What the error is about, and how each thing relates to it.
+  repeated Cause causes = 5;
+  // The facts a reason documents (a command, its stderr, a conflicting
+  // value). Keys are lower_snake.
+  map<string, string> metadata = 6;
+  // Escape hatch for typed payloads that fit nowhere else. Prefer causes and
+  // metadata.
+  repeated google.protobuf.Any details = 7;
+}
+
+// Cause names one thing an error or warning is about and how it relates.
+message Cause {
+  // How the subject relates to the error, UPPER_SNAKE, from one small shared
+  // vocabulary: INVALID_FIELD, REQUIRED_FIELD, CONFLICTING_FIELD, HELD_BY,
+  // LIVE_CHILD, MISSING_REFERENCE, GIT_FAILED.
+  string type = 1;
+  // What the cause points at; may be unset.
+  oneof subject {
+    // A resource locator, for example "ch:ses_7be0...".
+    string locator = 2;
+    // A request field path, for example "workspace.metadata.parent".
+    string field = 3;
+  }
+  // For people.
+  string description = 4;
+}
+
+// Warning is a problem that did not stop the request.
+message Warning {
+  // UPPER_SNAKE.
+  string reason = 1;
+  // For people.
+  string message = 2;
+  // What the warning is about.
+  repeated Cause causes = 3;
+}

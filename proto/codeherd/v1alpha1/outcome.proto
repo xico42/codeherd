@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package codeherd.v1alpha1;
+
+import "codeherd/v1alpha1/error.proto";
+
+// Outcome reports how a handler that ran and understood the request finished.
+// Every response carries one; the gRPC status stays OK and reports only
+// transport and infrastructure failures. Named Outcome to avoid confusion with
+// a resource's status and with google.rpc.Status.
+message Outcome {
+  // Whether the request succeeded, failed, partly succeeded or was skipped.
+  OutcomeStatus status = 1;
+  // Why the request failed. Set when status is FAILED or PARTIAL.
+  Error error = 2;
+  // Problems that did not stop the request.
+  repeated Warning warnings = 3;
+}
+
+// OutcomeStatus is the overall result of a request, a batch item or an
+// operation.
+enum OutcomeStatus {
+  // Never sent on purpose; read as a client or server bug.
+  OUTCOME_STATUS_UNSPECIFIED = 0;
+  // The request succeeded.
+  OUTCOME_STATUS_OK = 1;
+  // The request failed; error is set.
+  OUTCOME_STATUS_FAILED = 2;
+  // The request partly succeeded: result and error are both set.
+  OUTCOME_STATUS_PARTIAL = 3;
+  // Batch items only: an earlier item stopped the batch.
+  OUTCOME_STATUS_SKIPPED = 4;
+}

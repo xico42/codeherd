@@ -2,6 +2,9 @@
 go = "1.27"              # latest minor as of 2026-11-11; matches go.mod
 golangci-lint = "2.15"   # latest minor as of 2026-11-11 (was the go.mod tool directive, v2.12.2)
 lefthook = "2"           # git hooks; hooks only check, never write
+buf = "1"                # proto lint, format and code generation
+protoc-gen-go = "1.36"   # buf plugin: Go message types
+protoc-gen-go-grpc = "1.6" # buf plugin: gRPC service stubs (none yet)
 
 [settings]
 lockfile = true

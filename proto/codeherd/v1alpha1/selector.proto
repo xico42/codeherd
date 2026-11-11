@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package codeherd.v1alpha1;
+
+// Scope selects the namespaces a List or Subscribe covers.
+message Scope {
+  // One namespace, or all of them.
+  oneof namespaces {
+    // A single namespace.
+    string namespace = 1;
+    // Every namespace.
+    bool all_namespaces = 2;
+  }
+}
+
+// Selector picks objects within a scope. Every field it sets must match;
+// unset fields match anything.
+message Selector {
+  // The kind, for example "workspace". Empty matches any kind.
+  string kind = 1;
+  // A bare ID: exactly this object.
+  string id = 2;
+  // A locator: direct children of this object only.
+  string parent = 3;
+  // Every key must be present and equal its value.
+  map<string, string> labels = 4;
+  // Set-based label requirements, with Kubernetes semantics.
+  repeated LabelRequirement label_requirements = 5;
+}
+
+// LabelRequirement is one set-based label match. The API never parses
+// selector strings; the CLI turns kubectl's -l syntax into these.
+message LabelRequirement {
+  // The label key.
+  string key = 1;
+  // How the key's value is matched.
+  Operator operator = 2;
+  // The values to match. IN and NOT_IN only.
+  repeated string values = 3;
+
+  // Operator says how a label requirement matches.
+  enum Operator {
+    // Invalid; a requirement must name an operator.
+    OPERATOR_UNSPECIFIED = 0;
+    // The key is present and its value is one of values.
+    OPERATOR_IN = 1;
+    // The key's value is not one of values. Also matches objects without the
+    // key.
+    OPERATOR_NOT_IN = 2;
+    // The key is present, with any value.
+    OPERATOR_EXISTS = 3;
+    // The key is absent.
+    OPERATOR_DOES_NOT_EXIST = 4;
+  }
+}

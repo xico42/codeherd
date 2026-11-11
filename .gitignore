@@ -2,7 +2,6 @@ ch
 *.test
 .env
 *.toml.local
-vendor/
 *.out
 /tmp/
 

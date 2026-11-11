@@ -291,10 +291,11 @@ Download the appropriate archive from the [latest release](https://github.com/xi
 
 ### From source
 
-Requires Go 1.22+, git, and tmux.
+Requires [mise](https://mise.jdx.dev), [Task](https://taskfile.dev), git, and tmux. mise installs the pinned Go toolchain.
 
 ```bash
-make install    # builds and installs to ~/.local/bin/ch
+task setup      # installs pinned tools, downloads modules, installs git hooks
+task install    # builds and installs to ~/.local/bin/ch
 ```
 
 ## Shell Completion
@@ -358,10 +359,12 @@ ch
 ## Development
 
 ```bash
-make build          # build ./ch binary
-make test           # run unit tests
-make lint           # run linter
-make check          # coverage (80%+) + integration tests + lint + build
+task setup          # install pinned tools (mise), modules and git hooks
+task build          # build ./ch binary
+task test           # run unit tests
+task lint           # run linter
+task format         # format Go files
+task check          # format check + coverage (80%+) + integration tests + lint + build
 ```
 
 ## Documentation

@@ -35,24 +35,26 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: test -f docs/release-notes/${{ steps.read.outputs.version }}.md
 
-      - uses: actions/setup-go@v5
+      - uses: jdx/mise-action@v4
         if: steps.check.outputs.skip != 'true'
-        with:
-          go-version-file: go.mod
+
+      - name: Install task
+        if: steps.check.outputs.skip != 'true'
+        run: mise use -g task@3
 
       - name: Build + archive all targets
         if: steps.check.outputs.skip != 'true'
         run: |
           for goos in linux darwin; do
             for goarch in amd64 arm64; do
-              make release-build   GOOS=$goos GOARCH=$goarch
-              make release-archive GOOS=$goos GOARCH=$goarch
+              task release-build   GOOS=$goos GOARCH=$goarch
+              task release-archive GOOS=$goos GOARCH=$goarch
             done
           done
 
       - name: Checksums
         if: steps.check.outputs.skip != 'true'
-        run: make release-checksums
+        run: task release-checksums
 
       - uses: sigstore/cosign-installer@v3
         if: steps.check.outputs.skip != 'true'

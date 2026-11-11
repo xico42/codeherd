@@ -1,0 +1,139 @@
+version: '3'
+
+vars:
+  BIN_NAME: ch
+  INSTALL: '{{.HOME}}/.local/bin/{{.BIN_NAME}}'
+  DIST_DIR: dist
+  COVERAGE_THRESHOLD: 80
+  FMT_TARGETS: '{{if .CLI_ARGS}}{{.CLI_ARGS}}{{else}}.{{end}}'
+  # The tests create their own git repos. Git exports GIT_DIR (absolute in a
+  # worktree) to hooks, and an inherited GIT_DIR would point every git call
+  # in the tests at this repository instead of their temp repos.
+  GO_TEST: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR -u GIT_PREFIX go test
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
+
+  setup:
+    desc: Install pinned tools, download modules and install git hooks
+    cmds:
+      # tools mise just installed are not on PATH yet in this shell, so
+      # reach them through mise exec
+      - mise install
+      - mise exec -- go mod download
+      - mise exec -- lefthook install
+
+  deps:
+    desc: Download Go modules
+    cmds:
+      - go mod download
+
+  build:
+    desc: Build ./ch with the version from git describe
+    vars:
+      GIT_VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+    cmds:
+      - go build -ldflags "-s -w -X main.version={{.GIT_VERSION}}" -o {{.BIN_NAME}} .
+
+  install:
+    desc: Build and install ch to ~/.local/bin
+    deps: [build]
+    cmds:
+      - mv {{.BIN_NAME}} {{.INSTALL}}
+      - echo "Installed to {{.INSTALL}}"
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - '{{.GO_TEST}} ./...'
+
+  test-integration:
+    desc: Run unit and integration tests
+    cmds:
+      - '{{.GO_TEST}} -tags integration ./...'
+
+  coverage:
+    desc: Run tests with coverage and fail under {{.COVERAGE_THRESHOLD}}%
+    cmds:
+      - '{{.GO_TEST}} -coverprofile=coverage.out ./...'
+      - |
+        COVERAGE=$(go tool cover -func=coverage.out | grep "^total:" | awk '{gsub(/%/,""); print $3}')
+        rm -f coverage.out
+        echo "Total coverage: ${COVERAGE}%"
+        awk -v cov="${COVERAGE}" -v thr="{{.COVERAGE_THRESHOLD}}" \
+          'BEGIN { if (cov+0 < thr+0) { print "FAIL: " cov "% < " thr "%"; exit 1 }
+                   else { print "OK: " cov "% >= " thr "%" } }'
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  format:
+    desc: Format Go files in place (pass paths after --, default .)
+    cmds:
+      - gofmt -s -w {{.FMT_TARGETS}}
+
+  format:check:
+    desc: List unformatted Go files and fail if any (never writes)
+    silent: true
+    cmds:
+      - |
+        files=$(gofmt -s -l {{.FMT_TARGETS}})
+        if [ -n "$files" ]; then
+          echo "unformatted Go files:"
+          echo "$files"
+          echo "run 'task format' to fix"
+          exit 1
+        fi
+
+  check:
+    desc: Format check, coverage, integration tests, lint and build
+    cmds:
+      - task: format:check
+      - task: coverage
+      - task: test-integration
+      - task: lint
+      - task: build
+      - echo "All checks passed"
+
+  clean:
+    desc: Remove build and coverage outputs
+    cmds:
+      - rm -rf {{.BIN_NAME}} coverage.out {{.DIST_DIR}}
+
+  release-build:
+    desc: Cross-compile a release binary (GOOS=... GOARCH=...)
+    requires:
+      vars: [GOOS, GOARCH]
+    vars:
+      VERSION:
+        sh: cat VERSION
+    env:
+      CGO_ENABLED: '0'
+      GOOS: '{{.GOOS}}'
+      GOARCH: '{{.GOARCH}}'
+    cmds:
+      - mkdir -p {{.DIST_DIR}}/{{.GOOS}}-{{.GOARCH}}
+      - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o {{.DIST_DIR}}/{{.GOOS}}-{{.GOARCH}}/{{.BIN_NAME}} .
+
+  release-archive:
+    desc: Package a release binary with LICENSE and README.md (GOOS=... GOARCH=...)
+    requires:
+      vars: [GOOS, GOARCH]
+    vars:
+      VERSION:
+        sh: cat VERSION
+    cmds:
+      - cp LICENSE README.md {{.DIST_DIR}}/{{.GOOS}}-{{.GOARCH}}/
+      - tar -C {{.DIST_DIR}}/{{.GOOS}}-{{.GOARCH}} -czf {{.DIST_DIR}}/{{.BIN_NAME}}-{{.VERSION}}-{{.GOOS}}-{{.GOARCH}}.tar.gz {{.BIN_NAME}} LICENSE README.md
+
+  release-checksums:
+    desc: Write sha256 checksums for the release archives
+    dir: '{{.DIST_DIR}}'
+    cmds:
+      - sha256sum *.tar.gz > checksums.txt

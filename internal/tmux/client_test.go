@@ -322,6 +322,22 @@ func TestNewRealRunner(t *testing.T) {
 	}
 }
 
+// TestRealRunner_Run_cannotStart verifies that a tmux that cannot be started
+// (not on PATH) is reported as an error with exit code -1, not as an exit code.
+func TestRealRunner_Run_cannotStart(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, _, exitCode, err := tmux.NewRealRunner().Run("-V")
+	if err == nil {
+		t.Fatal("expected an error when tmux is not on PATH")
+	}
+	if !errors.Is(err, exec.ErrNotFound) {
+		t.Errorf("err = %v, want it to wrap exec.ErrNotFound", err)
+	}
+	if exitCode != -1 {
+		t.Errorf("exitCode = %d, want -1", exitCode)
+	}
+}
+
 // TestRealRunner_Run exercises the RealRunner using "tmux -V" which prints the version.
 func TestRealRunner_Run(t *testing.T) {
 	r := tmux.NewRealRunner()

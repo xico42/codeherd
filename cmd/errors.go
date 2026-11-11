@@ -33,8 +33,7 @@ func herdErr(project, branch string, err error) error {
 	case errors.Is(err, herd.ErrSessionRunning):
 		return fmt.Errorf("session %s-%s is running. Stop it first or use --force", project, branch)
 	case errors.Is(err, herd.ErrSessionExists):
-		var sesErr *herd.SessionExistsError
-		if errors.As(err, &sesErr) {
+		if sesErr, ok := errors.AsType[*herd.SessionExistsError](err); ok {
 			return fmt.Errorf("session %s/%s (%s) already exists. Attach with 'ch attach session %s %s'",
 				sesErr.Ref.Project, sesErr.Ref.Branch, sesErr.Type, sesErr.Ref.Project, sesErr.Ref.Branch)
 		}

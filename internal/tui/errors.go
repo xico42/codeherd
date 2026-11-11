@@ -19,8 +19,7 @@ func humanize(err error) string {
 	if err == nil {
 		return ""
 	}
-	var se *herd.SessionExistsError
-	if errors.As(err, &se) {
+	if se, ok := errors.AsType[*herd.SessionExistsError](err); ok {
 		return fmt.Sprintf("Session %s/%s (%s) already exists.", se.Ref.Project, se.Ref.Branch, se.Type)
 	}
 	for _, s := range sentinelMessages {

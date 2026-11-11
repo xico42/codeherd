@@ -108,7 +108,7 @@ Create a worktree for a throwaway branch, start an agent session, let it work, r
 
 | Layer | Technology |
 |---|---|
-| Language | Go 1.26 |
+| Language | Go 1.27 |
 | CLI framework | [Cobra](https://github.com/spf13/cobra) |
 | TUI | [Bubble Tea v2](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) |
 | Config format | TOML |
@@ -218,7 +218,9 @@ Clone paths mirror the repo URL structure under `projects_dir` (like `ghq` / Go 
 codeherd/
 ├── main.go
 ├── go.mod / go.sum
-├── Makefile
+├── Taskfile.yaml
+├── mise.toml / mise.lock
+├── lefthook.yml
 ├── .golangci.yml
 │
 ├── cmd/

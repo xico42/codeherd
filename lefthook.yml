@@ -11,6 +11,9 @@ pre-commit:
     - name: lint
       glob: "*.go"
       run: task lint
+    - name: proto
+      glob: "*.proto"
+      run: task proto:check
 
 pre-push:
   jobs:

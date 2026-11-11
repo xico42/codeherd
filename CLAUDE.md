@@ -14,14 +14,17 @@ task build            # build ./ch binary
 task install          # build + install to ~/.local/bin/ch
 task test             # go test ./...
 task test-integration # go test -tags integration ./...
-task lint             # golangci-lint run ./...
+task lint             # proto:check, then golangci-lint run ./...
 task format           # gofmt -s -w (paths after --, default .)
 task format:check     # list unformatted files, fail if any; never writes
 task check            # format check -> coverage (80%+) -> integration tests -> lint -> build
 task clean            # remove local binary, coverage and dist
+task proto:generate   # buf generate: proto/ -> api/
+task proto:format     # buf format -w
+task proto:check      # proto format, buf lint, and api/ matches the protos; never writes
 ```
 
-Tools (Go, golangci-lint, lefthook) are pinned in `mise.toml` and locked
+Tools (Go, golangci-lint, lefthook, buf and its protoc plugins) are pinned in `mise.toml` and locked
 exactly in `mise.lock`; go-task is installed globally. Git hooks
 (`lefthook.yml`) only check and report, never modify files: fix what they
 report with `task format`.
@@ -66,6 +69,8 @@ All commands run locally — they execute git/tmux/filesystem directly on whatev
 
 ### Package layout
 
+- **`proto/codeherd/v1alpha1/`** — the `codeherd.v1alpha1` API protos (shared message types; no services yet), linted with buf STANDARD. Conventions in `docs/api/conventions.md` and `docs/api/errors.md`
+- **`api/`** — Go code generated from `proto/` by `task proto:generate`. Committed, never hand-edited, excluded from the coverage figure; `task lint` fails when it is stale
 - **`main.go`** — entrypoint; delegates to `cmd.Execute()`; `version` var set via `-ldflags`
 - **`cmd/`** — Cobra commands; `root.go` wires `PersistentPreRunE` to load config; each command is a separate file
 - **`cmd/register.go`** — wires the verb-grouper command tree; each verb group (`list`, `show`, `create`, etc.) is registered here

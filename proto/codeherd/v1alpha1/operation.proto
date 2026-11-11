@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package codeherd.v1alpha1;
+
+import "codeherd/v1alpha1/meta.proto";
+import "codeherd/v1alpha1/outcome.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+
+// Operation is the flat record of an asynchronous write. A single write is an
+// operation with one item; a batch is an operation with many. Clients follow
+// it through Subscribe.
+message Operation {
+  // id (op_...), namespace and create_time.
+  ObjectMeta metadata = 1;
+  // Where the operation is in its lifecycle.
+  OperationState state = 2;
+  // Set when the operation is DONE.
+  OperationResult result = 3;
+}
+
+// OperationState is the lifecycle of an operation.
+enum OperationState {
+  // Never sent on purpose.
+  OPERATION_STATE_UNSPECIFIED = 0;
+  // Accepted and queued.
+  OPERATION_STATE_PENDING = 1;
+  // Running.
+  OPERATION_STATE_RUNNING = 2;
+  // Terminal; result.outcome says how it ended.
+  OPERATION_STATE_DONE = 3;
+}
+
+// OperationResult is how a finished operation ended.
+message OperationResult {
+  // Overall: OK, FAILED or PARTIAL.
+  Outcome outcome = 1;
+  // items[i] answers request item i.
+  repeated ItemResult items = 2;
+}
+
+// ItemResult answers one item of an operation and carries the state it wrote,
+// so clients need no follow-up Get.
+message ItemResult {
+  // OK, FAILED or SKIPPED.
+  Outcome outcome = 1;
+  // The written state. Core kinds take field numbers 2 to 99 as they are
+  // defined; plugin-defined results use extension.
+  oneof result {
+    // A plugin-defined result.
+    google.protobuf.Any extension = 100;
+  }
+}
+
+// Progress is free-form text for people about a running operation. No client
+// parses it; clients act on the operation's state and result only. It travels
+// on Subscribe and is not stored on the Operation record.
+message Progress {
+  // The operation's locator, for example "ch:op_4e1c...".
+  string operation = 1;
+  // Position in the request's items.
+  int32 item = 2;
+  // For people, for example "cloning saas/app".
+  string message = 3;
+  // When the progress was reported.
+  google.protobuf.Timestamp time = 4;
+}

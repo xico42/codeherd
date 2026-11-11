@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package codeherd.v1alpha1;
+
+// DeleteOptions controls a delete. Deletes cascade down containment on the
+// server; there is no orphan policy.
+message DeleteOptions {
+  // What to do with live children. UNSPECIFIED means REFUSE.
+  Propagation propagation = 1;
+  // Optional precondition: the delete fails unless the object is at this
+  // version.
+  string resource_version = 2;
+}
+
+// Propagation says how a delete treats live children.
+enum Propagation {
+  // Treated as REFUSE.
+  PROPAGATION_UNSPECIFIED = 0;
+  // Fail with LIVE_CHILDREN if live children exist.
+  PROPAGATION_REFUSE = 1;
+  // Delete children deepest-first, then the object.
+  PROPAGATION_CASCADE = 2;
+}

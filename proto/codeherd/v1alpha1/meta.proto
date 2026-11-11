@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package codeherd.v1alpha1;
+
+import "google/protobuf/timestamp.proto";
+
+// ObjectMeta is the metadata every stored resource carries, next to its spec
+// (intent, written by clients) and status (observation, written by the
+// backend). Clients never set output-only fields.
+message ObjectMeta {
+  // Output only. The resource ID with its kind prefix (ws_..., ses_...),
+  // minted by the server.
+  string id = 1;
+  // The namespace the resource lives in. Empty for cluster-scoped kinds
+  // (namespace, node, plugin).
+  string namespace = 2;
+  // Locator of the containing resource. Immutable: it scopes names, never
+  // changes, and bounds the child's lifetime.
+  string parent = 3;
+  // Optional human name, scoped by the parent.
+  string name = 4;
+  // Output only. Changes on every write; usable as a write precondition.
+  string resource_version = 5;
+  // Labels that selectors match on.
+  map<string, string> labels = 6;
+  // Output only. When the resource was created.
+  google.protobuf.Timestamp create_time = 7;
+  // Output only. Set on tombstones: a deleted resource keeps its record with
+  // delete_time set.
+  google.protobuf.Timestamp delete_time = 8;
+  // annotations: added when first needed.
+}

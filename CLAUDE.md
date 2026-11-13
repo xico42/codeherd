@@ -27,7 +27,9 @@ task proto:check      # proto format, buf lint, and api/ matches the protos; nev
 Tools (Go, golangci-lint, lefthook, buf and its protoc plugins) are pinned in `mise.toml` and locked
 exactly in `mise.lock`; go-task is installed globally. Git hooks
 (`lefthook.yml`) only check and report, never modify files: fix what they
-report with `task format`.
+report with `task format`. Hooks call only the `hook:*` tasks, which clear
+the `GIT_DIR` family of variables git exports to hooks before running the
+real task; without that, the tests' git calls would hit this repository.
 
 Run a single package's tests:
 ```bash

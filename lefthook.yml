@@ -1,5 +1,7 @@
 # Hooks only check and report; they never modify files.
 # Fix what they report with the writing tasks (task format).
+# Jobs call only hook:* tasks, which clear the GIT_DIR family of variables
+# git exports to hooks before running the real task.
 output: [failure]
 
 pre-commit:
@@ -7,15 +9,15 @@ pre-commit:
   jobs:
     - name: format
       glob: "*.go"
-      run: task format:check -- {staged_files}
+      run: task hook:format -- {staged_files}
     - name: lint
       glob: "*.go"
-      run: task lint
+      run: task hook:lint
     - name: proto
       glob: "*.proto"
-      run: task proto:check
+      run: task hook:proto
 
 pre-push:
   jobs:
     - name: test
-      run: task test
+      run: task hook:test

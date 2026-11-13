@@ -6,10 +6,11 @@ vars:
   DIST_DIR: dist
   COVERAGE_THRESHOLD: 80
   FMT_TARGETS: '{{if .CLI_ARGS}}{{.CLI_ARGS}}{{else}}.{{end}}'
-  # The tests create their own git repos. Git exports GIT_DIR (absolute in a
-  # worktree) to hooks, and an inherited GIT_DIR would point every git call
-  # in the tests at this repository instead of their temp repos.
-  GO_TEST: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR -u GIT_PREFIX go test
+  # Git exports these to hooks (GIT_DIR is absolute in a worktree). Any git
+  # call made under them targets this repository, whatever directory it runs
+  # in, so the tests' git calls on their temp repos would hit this one.
+  # The hook:* tasks clear them before running the real task.
+  NO_GIT_HOOK_ENV: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_COMMON_DIR -u GIT_PREFIX
 
 tasks:
   default:
@@ -49,17 +50,17 @@ tasks:
   test:
     desc: Run unit tests
     cmds:
-      - '{{.GO_TEST}} ./...'
+      - go test ./...
 
   test-integration:
     desc: Run unit and integration tests
     cmds:
-      - '{{.GO_TEST}} -tags integration ./...'
+      - go test -tags integration ./...
 
   coverage:
     desc: Run tests with coverage and fail under {{.COVERAGE_THRESHOLD}}%
     cmds:
-      - '{{.GO_TEST}} -coverprofile=coverage.out ./...'
+      - go test -coverprofile=coverage.out ./...
       - |
         # generated code (api/) does not count toward the threshold
         grep -v '^github.com/xico42/codeherd/api/' coverage.out > coverage.tmp
@@ -128,6 +129,29 @@ tasks:
       - task: lint
       - task: build
       - echo "All checks passed"
+
+  # Git hooks call only these tasks (see lefthook.yml). Each one clears
+  # git's hook environment, then runs the real task, so the checks behave
+  # as they do from a terminal.
+  hook:format:
+    desc: 'Git hook: format:check on the given files'
+    cmds:
+      - '{{.NO_GIT_HOOK_ENV}} task format:check -- {{.CLI_ARGS}}'
+
+  hook:lint:
+    desc: 'Git hook: lint'
+    cmds:
+      - '{{.NO_GIT_HOOK_ENV}} task lint'
+
+  hook:proto:
+    desc: 'Git hook: proto:check'
+    cmds:
+      - '{{.NO_GIT_HOOK_ENV}} task proto:check'
+
+  hook:test:
+    desc: 'Git hook: test'
+    cmds:
+      - '{{.NO_GIT_HOOK_ENV}} task test'
 
   clean:
     desc: Remove build and coverage outputs

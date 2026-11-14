@@ -45,14 +45,17 @@ observed half of a resource (section 3), never the result of a call.
 **Status: Settled.**
 
 - The proto speaks the target vocabulary: namespace, repo, workspace, worktree,
-  session, agent. The CLI keeps its current nouns (project, worktree) until it
-  adopts the API vocabulary.
+  session, agent. The new CLI, `ch next`, speaks the API vocabulary from its
+  first command. The current commands keep their nouns (project, worktree)
+  until `ch next` replaces them.
 - The package is `codeherd.v1alpha1`. It may change incompatibly until it is
   frozen as `codeherd.v1`. From then on, `buf breaking` guards it and changes
   within a major version are additive.
 - Field numbers are the wire format. Removed fields are `reserved`, never
   reused.
-- Each RPC has its own `XxxRequest` and `XxxResponse` messages.
+- Each RPC has its own `XxxRequest` message. Reads have their own
+  `XxxResponse`. Every write, `Batch` included, returns the shared
+  `SubmitResponse` (section 7.1).
 
 ---
 
@@ -299,6 +302,7 @@ Rules:
 - **`Resolve` turns typed input into candidates:**
 
   ```proto
+  // in SystemService (section 12)
   rpc Resolve(ResolveRequest) returns (ResolveResponse);
   message ResolveRequest {
     string kind = 1;            // "workspace"; empty = any kind
@@ -660,6 +664,7 @@ changes and progress for everything a client selects. There are no per-kind
 `Watch` RPCs.
 
 ```proto
+// in SystemService (section 12)
 rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
 
 message SubscribeRequest {
@@ -805,7 +810,57 @@ message Missed {
 
 ---
 
-## 12. Decisions recorded here
+## 12. Services
+
+**Status: Settled.**
+
+- **One service per noun.** Each noun's RPCs live in its own service:
+  `WorkspaceService`, `SessionService`, `RepoService`, `OperationService`
+  (section 7.3), and so on.
+- **RPCs that span services live in `SystemService`:** `GetSystemInfo`,
+  `Resolve` (section 5), `Subscribe` (section 10) and `Batch` (section 8).
+
+```proto
+service SystemService {
+  rpc GetSystemInfo(GetSystemInfoRequest) returns (GetSystemInfoResponse);
+  rpc Resolve(ResolveRequest) returns (ResolveResponse);
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+  rpc Batch(BatchRequest) returns (SubmitResponse);
+}
+```
+
+### 12.1 System info
+
+```proto
+message GetSystemInfoRequest {}
+
+message GetSystemInfoResponse {
+  Outcome outcome = 1;
+  SystemInfo result = 2;
+}
+
+message SystemInfo {
+  string api_version = 1;                   // "codeherd.v1alpha1"
+  string version = 2;                       // build version: "v0.14.0"
+  string commit = 3;
+  int32 pid = 4;
+  google.protobuf.Timestamp start_time = 5;
+}
+```
+
+- **Stateless.** `GetSystemInfo` is an ordinary unary read. There is no
+  handshake: the server keeps no per-connection state, and any RPC may be a
+  client's first call.
+- **No version skew handling.** Neither side compares versions or refuses to
+  talk. An RPC the server lacks fails with `UNIMPLEMENTED` (section 6).
+  `ch next version` prints both sides so a user can see a mismatch.
+- **Cluster-scoped.** The request carries no namespace.
+- `SystemInfo` is a read-only projection, so it has no metadata/spec/status
+  split (section 3).
+
+---
+
+## 13. Decisions recorded here
 
 **Status: Settled.**
 

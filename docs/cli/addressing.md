@@ -145,7 +145,7 @@ error: workspace ws_3f9a1c7e2b has live sessions: ses_7be04f1a9d, ses_c2d81e7f05
 - **Two-positional addressing.** `ch create session <project> <branch>` and
   the other two-positional forms stay as deprecated aliases for a while.
 - **Hooks.** The pre/post clone, worktree, session, copy and template hooks
-  will be removed (see the API conventions, section 12).
+  will be removed (see the API conventions, section 13).
 - **Precedent.** codeherd addresses by ID, like Docker and AWS, not by name
   like Kubernetes. Kubernetes UIDs are cluster-unique UUIDs that are never used
   as addresses. codeherd's names are optional and mutable, so they cannot serve

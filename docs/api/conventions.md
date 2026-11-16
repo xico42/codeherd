@@ -551,12 +551,14 @@ RUNNING operations never expire. A lookup after expiry returns `NOT_FOUND`.
 
 ### 7.6 Plugins
 
-Plugin services import the core protos and reuse `SubmitResponse`, `Operation`,
-`Outcome`, `Error` and `ObjectMeta`. A plugin's typed result goes in
-`ItemResult.extension`. The protos live in `proto/codeherd/v1alpha1/`. The
-generated Go code lives in `api/` in the main module
-(`github.com/xico42/codeherd/api/codeherd/v1alpha1`). It moves to its own
-module when a plugin needs to import it without the CLI, tmux or git packages.
+Plugins do not speak this API. The daemon calls them over their own protocol,
+JSON-RPC over stdio, described in [plugins.md](plugins.md), and they call back
+through the `ch` CLI. The daemon surfaces what plugins produce through this
+API: a plugin's typed result goes in `ItemResult.extension`, its events in the
+event's `extension`, and its errors keep the plugin's id as `domain`.
+
+The protos live in `proto/codeherd/v1alpha1/`. The generated Go code lives in
+`api/` in the main module (`github.com/xico42/codeherd/api/codeherd/v1alpha1`).
 
 ---
 
